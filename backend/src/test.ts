@@ -153,9 +153,48 @@ async function runTests() {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${loginData.token}`,
       },
-      body: JSON.stringify({ plan: 'enterprise' }),
+      body: JSON.stringify({ plan: 'enterprise', mode: 'instant' }),
     });
     assert.strictEqual(upgradeRes.status, 200);
+
+    console.log('6. Testing Muse Connector & Lead Offer Creation Flow...');
+    const museSyncRes = await fetch(`${apiBase}/api/muse/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${loginData.token}`,
+      },
+      body: JSON.stringify({
+        businessName: 'Acme AI Cloud',
+        siteUrl: mockSite.url,
+        industry: 'Cloud Infrastructure',
+        keyServices: ['GPU Clusters', 'RAG Vector Engine'],
+      }),
+    });
+    assert.strictEqual(museSyncRes.status, 200);
+
+    const offerRes = await fetch(`${apiBase}/api/muse/offers`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${loginData.token}`,
+      },
+      body: JSON.stringify({
+        title: 'Free GPU Credit Offer',
+        headline: 'Get $500 in Free H100 GPU Credits',
+        description: 'Sign up today to receive $500 in inference credits.',
+        offerType: 'discount',
+        promoCode: 'MUSEGPU500',
+        ctaText: 'Claim $500 Credits',
+        ctaUrl: `${mockSite.url}/claim`,
+      }),
+    });
+    assert.strictEqual(offerRes.status, 201);
+
+    const v1OffersRes = await fetch(`${apiBase}/api/v1/muse/offers`, {
+      headers: { 'X-API-Key': keyData.rawKey },
+    });
+    assert.strictEqual(v1OffersRes.status, 200);
 
     console.log('\n✅ ALL E2E TESTS PASSED!');
   } finally {

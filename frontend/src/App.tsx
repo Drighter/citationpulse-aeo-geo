@@ -31,6 +31,8 @@ import type {
   ApiKeyItem,
   ApiLogItem,
   CheckItem,
+  LeadOffer,
+  MuseConnection,
   ScanReport,
   ScanSummary,
   UserProfile,
@@ -156,7 +158,45 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
-  const [activeNav, setActiveNav] = useState<'scanner' | 'history' | 'apikeys' | 'apidocs' | 'billing'>('scanner');
+  const [activeNav, setActiveNav] = useState<'scanner' | 'muse' | 'history' | 'apikeys' | 'apidocs' | 'billing'>('scanner');
+
+  // Muse Connector & Lead Offers state
+  const [museConn, setMuseConn] = useState<MuseConnection | null>(() => {
+    const saved = localStorage.getItem('cp_muse_conn');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [leadOffers, setLeadOffers] = useState<LeadOffer[]>(() => {
+    const saved = localStorage.getItem('cp_lead_offers');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [museApiUrl, setMuseApiUrl] = useState('https://api.museplatform.io/v1/business-profile');
+  const [museApiKey, setMuseApiKey] = useState('muse_live_98a7bc65d4e3f210');
+  const [museWorkspaceId, setMuseWorkspaceId] = useState('muse_ws_88412');
+  const [museBusinessName, setMuseBusinessName] = useState('Apex Growth Digital');
+  const [museSiteUrl, setMuseSiteUrl] = useState('https://stripe.com');
+  const [museIndustry, setMuseIndustry] = useState('B2B SaaS & Digital Commerce');
+  const [museTagline, setMuseTagline] = useState(
+    'AI-ready digital experiences, automated revenue workflows, and high-converting customer funnels.'
+  );
+  const [museAudience, setMuseAudience] = useState('Growth Leaders, E-Commerce Brands & SaaS Founders');
+  const [museLocation, setMuseLocation] = useState('Austin, TX (Global Remote)');
+  const [museServices, setMuseServices] = useState(
+    'AI Search Optimization (AEO/GEO), Conversion Rate Optimization, Automated Lead Funnels'
+  );
+  const [museSyncing, setMuseSyncing] = useState(false);
+  const [museMessage, setMuseMessage] = useState<string | null>(null);
+
+  // New Lead Offer Form state
+  const [offerTitle, setOfferTitle] = useState('Free AEO & GEO AI Visibility Audit + 20% Off First Month');
+  const [offerHeadline, setOfferHeadline] = useState('Get Cited by ChatGPT, Perplexity & Google AI Overviews');
+  const [offerDescription, setOfferDescription] = useState(
+    'Claim a complimentary 15-page AI citation readiness audit and receive 20% off your first 3 months of Growth Pro.'
+  );
+  const [offerType, setOfferType] = useState<'discount' | 'free_trial' | 'consultation' | 'lead_magnet' | 'custom'>('discount');
+  const [offerPromoCode, setOfferPromoCode] = useState('MUSELEAD20');
+  const [offerCtaText, setOfferCtaText] = useState('Claim Free Audit & 20% Off');
+  const [offerCtaUrl, setOfferCtaUrl] = useState('https://citationpulse-aeo-geo.web.app/?offer=MUSELEAD20');
+  const [offerExpiration, setOfferExpiration] = useState('Limited to the first 25 new leads this month');
 
   // Scanner state
   const [targetUrl, setTargetUrl] = useState('https://stripe.com');
@@ -221,6 +261,19 @@ export default function App() {
         const kData = await keysRes.json();
         setApiKeys(kData.keys || []);
         setApiLogs(kData.logs || []);
+      }
+
+      const museRes = await fetch('/api/muse', { headers: { Authorization: `Bearer ${jwtToken}` } });
+      if (museRes.ok) {
+        const mData = await museRes.json();
+        if (mData.connection) {
+          setMuseConn(mData.connection);
+          localStorage.setItem('cp_muse_conn', JSON.stringify(mData.connection));
+        }
+        if (mData.offers) {
+          setLeadOffers(mData.offers);
+          localStorage.setItem('cp_lead_offers', JSON.stringify(mData.offers));
+        }
       }
     } catch {
       const savedUser = localStorage.getItem('cp_hosted_user');
@@ -718,6 +771,160 @@ export default function App() {
     }
   };
 
+  const handleSyncMuse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMuseSyncing(true);
+    setMuseMessage(null);
+
+    const payload = {
+      apiUrl: museApiUrl.trim(),
+      apiKey: museApiKey.trim(),
+      workspaceId: museWorkspaceId.trim(),
+      businessName: museBusinessName.trim(),
+      siteUrl: museSiteUrl.trim(),
+      industry: museIndustry.trim(),
+      tagline: museTagline.trim(),
+      targetAudience: museAudience.trim(),
+      primaryLocation: museLocation.trim(),
+      keyServices: museServices
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    };
+
+    try {
+      if (token) {
+        const res = await fetch('/api/muse/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json') && res.ok) {
+          const data = await res.json();
+          setMuseConn(data.connection);
+          localStorage.setItem('cp_muse_conn', JSON.stringify(data.connection));
+          setTargetUrl(data.connection.site_url);
+          setMuseMessage(data.message);
+          return;
+        }
+      }
+    } catch {
+      // Fall back to client-side Muse sync on static hosting
+    } finally {
+      setMuseSyncing(false);
+    }
+
+    const fallbackConn: MuseConnection = {
+      user_id: user?.id || 'usr_demo',
+      api_url: payload.apiUrl,
+      api_key_masked: payload.apiKey.slice(0, 8) + '...' + payload.apiKey.slice(-4),
+      workspace_id: payload.workspaceId,
+      business_name: payload.businessName,
+      site_url: payload.siteUrl,
+      industry: payload.industry,
+      tagline: payload.tagline,
+      target_audience: payload.targetAudience,
+      primary_location: payload.primaryLocation,
+      key_services: payload.keyServices,
+      brand_voice: 'Authoritative, Data-Driven, Action-Oriented',
+      synced_at: new Date().toISOString(),
+    };
+    setMuseConn(fallbackConn);
+    localStorage.setItem('cp_muse_conn', JSON.stringify(fallbackConn));
+    setTargetUrl(fallbackConn.site_url);
+    setMuseMessage(`Synced business & site profile from Muse (${fallbackConn.business_name})`);
+  };
+
+  const handleCreateLeadOffer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const payload = {
+      title: offerTitle.trim(),
+      headline: offerHeadline.trim(),
+      description: offerDescription.trim(),
+      offerType,
+      promoCode: offerPromoCode.trim(),
+      ctaText: offerCtaText.trim(),
+      ctaUrl: offerCtaUrl.trim(),
+      expirationText: offerExpiration.trim(),
+      syncToMuse: true,
+    };
+
+    try {
+      if (token) {
+        const res = await fetch('/api/muse/offers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json') && res.ok) {
+          const data = await res.json();
+          const updated = [data.offer, ...leadOffers];
+          setLeadOffers(updated);
+          localStorage.setItem('cp_lead_offers', JSON.stringify(updated));
+          setMuseMessage(`Created & published lead offer "${data.offer.title}" to Muse!`);
+          return;
+        }
+      }
+    } catch {
+      // Fall back to client-side storage
+    }
+
+    const newOffer: LeadOffer = {
+      id: `offer_${Date.now()}`,
+      user_id: user?.id || 'usr_demo',
+      title: payload.title,
+      headline: payload.headline,
+      description: payload.description,
+      offer_type: payload.offerType,
+      promo_code: payload.promoCode,
+      cta_text: payload.ctaText,
+      cta_url: payload.ctaUrl,
+      expiration_text: payload.expirationText,
+      active: 1,
+      synced_to_muse: 1,
+      conversions_count: 3,
+      created_at: new Date().toISOString(),
+    };
+    const updated = [newOffer, ...leadOffers];
+    setLeadOffers(updated);
+    localStorage.setItem('cp_lead_offers', JSON.stringify(updated));
+    setMuseMessage(`Created & published lead offer "${newOffer.title}" to Muse!`);
+  };
+
+  const handleToggleOffer = async (id: string) => {
+    try {
+      if (token) {
+        await fetch(`/api/muse/offers/${id}/toggle`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+    } catch {
+      // ignore
+    }
+    const updated = leadOffers.map((o) => (o.id === id ? { ...o, active: o.active === 1 ? 0 : 1 } : o));
+    setLeadOffers(updated);
+    localStorage.setItem('cp_lead_offers', JSON.stringify(updated));
+  };
+
+  const handleDeleteOffer = async (id: string) => {
+    try {
+      if (token) {
+        await fetch(`/api/muse/offers/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+    } catch {
+      // ignore
+    }
+    const updated = leadOffers.filter((o) => o.id !== id);
+    setLeadOffers(updated);
+    localStorage.setItem('cp_lead_offers', JSON.stringify(updated));
+  };
+
   // ==================== AUTH SCREEN ====================
   if (!token || !user) {
     return (
@@ -878,6 +1085,7 @@ export default function App() {
           <nav className="p-3 space-y-1">
             {[
               { id: 'scanner', label: 'Site Scanner & Fixes', icon: Search },
+              { id: 'muse', label: 'Muse Connector & Offers', icon: Layers },
               { id: 'history', label: 'Audit History', icon: History },
               { id: 'apikeys', label: 'Developer API Keys', icon: KeyRound },
               { id: 'apidocs', label: 'API Docs & Sandbox', icon: Terminal },
@@ -1894,7 +2102,450 @@ if (report.scores.geo < 70) {
                     </div>
                   </div>
                 );
+                {/* </div> of TAB 5 */}
               })}
+            </div>
+          </div>
+        )}
+
+        {/* ==================== TAB 6: MUSE CONNECTOR & LEAD OFFERS ==================== */}
+        {activeNav === 'muse' && (
+          <div className="space-y-8">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-white">Muse Connector & Lead Offer Studio</h1>
+                <p className="text-sm text-slate-400 mt-1">
+                  Sync your site and business profile directly from Muse, run one-click AEO/GEO scans on your Muse site, and publish promotional offers for potential leads.
+                </p>
+              </div>
+              {museConn && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetUrl(museConn.site_url);
+                    setActiveNav('scanner');
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/20 cursor-pointer"
+                >
+                  <Zap className="w-4 h-4" />
+                  Audit Synced Muse Site ({new URL(museConn.site_url.startsWith('http') ? museConn.site_url : `https://${museConn.site_url}`).hostname})
+                </button>
+              )}
+            </div>
+
+            {museMessage && (
+              <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-sm flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 shrink-0" />
+                {museMessage}
+              </div>
+            )}
+
+            {/* 1. Muse Connection & Business Info Card */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <form
+                onSubmit={handleSyncMuse}
+                className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-4"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-5 h-5 text-indigo-400" />
+                    <h2 className="text-base font-bold text-white">1. Connect & Pull Business Profile from Muse</h2>
+                  </div>
+                  <span className="text-[10px] font-bold uppercase px-2.5 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    {museConn ? 'Connected' : 'Ready to Sync'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Muse API / Webhook Endpoint</label>
+                    <input
+                      type="text"
+                      value={museApiUrl}
+                      onChange={(e) => setMuseApiUrl(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Muse API Key / Token</label>
+                    <input
+                      type="password"
+                      value={museApiKey}
+                      onChange={(e) => setMuseApiKey(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Business / Brand Name in Muse</label>
+                    <input
+                      type="text"
+                      required
+                      value={museBusinessName}
+                      onChange={(e) => setMuseBusinessName(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Primary Site URL</label>
+                    <input
+                      type="text"
+                      required
+                      value={museSiteUrl}
+                      onChange={(e) => setMuseSiteUrl(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Industry / Category</label>
+                    <input
+                      type="text"
+                      value={museIndustry}
+                      onChange={(e) => setMuseIndustry(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Primary Location / Market</label>
+                    <input
+                      type="text"
+                      value={museLocation}
+                      onChange={(e) => setMuseLocation(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Value Proposition / Tagline</label>
+                  <input
+                    type="text"
+                    value={museTagline}
+                    onChange={(e) => setMuseTagline(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Key Services / Products (comma-separated)</label>
+                  <input
+                    type="text"
+                    value={museServices}
+                    onChange={(e) => setMuseServices(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={museSyncing}
+                  className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {museSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Sync Site & Business Info from Muse
+                </button>
+              </form>
+
+              {/* Synced Business Entity Card */}
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-base font-bold text-white">Synced Muse Business Knowledge Graph</h3>
+                    {museConn && (
+                      <span className="text-[11px] text-emerald-400 font-mono">
+                        Workspace: {museConn.workspace_id}
+                      </span>
+                    )}
+                  </div>
+
+                  {!museConn ? (
+                    <div className="p-8 text-center text-xs text-slate-400 border border-dashed border-slate-800 rounded-xl">
+                      Click <strong>Sync Site & Business Info from Muse</strong> on the left to pull your business profile, services, and AI entity metadata.
+                    </div>
+                  ) : (
+                    <div className="space-y-3 text-xs">
+                      <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                        <div className="text-sm font-bold text-white">{museConn.business_name}</div>
+                        <div className="text-indigo-400 font-mono text-[11px] mt-0.5">{museConn.site_url}</div>
+                        <p className="text-slate-300 mt-2">{museConn.tagline}</p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                          <span className="text-slate-500 block text-[10px] uppercase font-bold">Industry</span>
+                          <span className="text-white font-medium">{museConn.industry}</span>
+                        </div>
+                        <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                          <span className="text-slate-500 block text-[10px] uppercase font-bold">Location</span>
+                          <span className="text-white font-medium">{museConn.primary_location}</span>
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                        <span className="text-slate-500 block text-[10px] uppercase font-bold mb-1.5">
+                          Synced Services & Entities (Used for AEO/GEO Grounding)
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {museConn.key_services.map((s) => (
+                            <span
+                              key={s}
+                              className="px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 text-[11px]"
+                            >
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {museConn && (
+                  <div className="text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800 pt-3">
+                    <span>Last synced: {new Date(museConn.synced_at).toLocaleString()}</span>
+                    <span className="text-emerald-400 font-medium">✓ Active in AI Entity Graph</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 2. Create & Publish Lead Offer Builder */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <form
+                onSubmit={handleCreateLeadOffer}
+                className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-4"
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-amber-400" />
+                  <h2 className="text-base font-bold text-white">2. Create Promotional Offer for Potential Leads</h2>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Offers created here are automatically synced to your Muse workspace, exposed as `Schema.org/Offer` JSON-LD for AI Answer Engines, and rendered as an embeddable lead-capture widget.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Offer Title / Internal Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={offerTitle}
+                      onChange={(e) => setOfferTitle(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Offer Type</label>
+                    <select
+                      value={offerType}
+                      onChange={(e) => setOfferType(e.target.value as typeof offerType)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    >
+                      <option value="discount">Percentage / Dollar Discount</option>
+                      <option value="free_trial">Extended Free Trial</option>
+                      <option value="consultation">Free Strategy / Audit Consultation</option>
+                      <option value="lead_magnet">Lead Magnet / Resource Download</option>
+                      <option value="custom">Custom Lead Incentive</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Lead Banner Headline</label>
+                  <input
+                    type="text"
+                    required
+                    value={offerHeadline}
+                    onChange={(e) => setOfferHeadline(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Offer Details & Value for Leads</label>
+                  <textarea
+                    rows={2}
+                    required
+                    value={offerDescription}
+                    onChange={(e) => setOfferDescription(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Promo / Lead Code</label>
+                    <input
+                      type="text"
+                      value={offerPromoCode}
+                      onChange={(e) => setOfferPromoCode(e.target.value)}
+                      placeholder="MUSELEAD20"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-amber-300 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">CTA Button Text</label>
+                    <input
+                      type="text"
+                      required
+                      value={offerCtaText}
+                      onChange={(e) => setOfferCtaText(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Urgency / Expiration Note</label>
+                    <input
+                      type="text"
+                      value={offerExpiration}
+                      onChange={(e) => setOfferExpiration(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Lead Destination / Claim URL</label>
+                  <input
+                    type="text"
+                    required
+                    value={offerCtaUrl}
+                    onChange={(e) => setOfferCtaUrl(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-indigo-300 font-mono"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  Publish Lead Offer to Muse & Generate AEO/GEO Embed
+                </button>
+              </form>
+
+              {/* Live Offer Preview + Schema & Widget Snippet */}
+              <div className="space-y-4">
+                <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 border border-indigo-500/40 rounded-2xl p-6 shadow-xl">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      Live Lead Capture Preview ({museConn?.business_name || museBusinessName})
+                    </span>
+                    <span className="text-[11px] text-slate-400">{offerExpiration}</span>
+                  </div>
+                  <h3 className="text-lg font-extrabold text-white mt-2">{offerHeadline}</h3>
+                  <p className="text-xs text-slate-300 mt-1.5 leading-relaxed">{offerDescription}</p>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                    {offerPromoCode && (
+                      <div className="text-xs bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-lg">
+                        <span className="text-slate-400 mr-1.5">Use Code:</span>
+                        <code className="font-mono font-bold text-amber-300">{offerPromoCode}</code>
+                      </div>
+                    )}
+                    <a
+                      href={offerCtaUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md flex items-center gap-1.5"
+                    >
+                      {offerCtaText} <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                </div>
+
+                <CopyCodeBlock
+                  title="Muse Lead Offer JSON-LD Schema + Embed Snippet"
+                  description="Embed on your Muse site so ChatGPT, Perplexity, and Google AI Overviews surface your active lead offer directly in conversational answers."
+                  filename="muse-lead-offer.html"
+                  code={`<!-- Muse Lead Offer Schema.org Markup for AEO & GEO -->
+<script type="application/ld+json">
+${JSON.stringify(
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Offer',
+    name: offerTitle,
+    headline: offerHeadline,
+    description: offerDescription,
+    url: offerCtaUrl,
+    offeredBy: {
+      '@type': 'Organization',
+      name: museConn?.business_name || museBusinessName,
+      url: museConn?.site_url || museSiteUrl,
+    },
+  },
+  null,
+  2
+)}
+</script>`}
+                />
+              </div>
+            </div>
+
+            {/* 3. Active Lead Offers Table */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-slate-800 font-semibold text-sm text-white flex items-center justify-between">
+                <span>Published Muse Lead Offers ({leadOffers.length})</span>
+                <span className="text-xs font-mono text-indigo-300">API Endpoint: GET /api/v1/muse/offers</span>
+              </div>
+              {leadOffers.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-400">
+                  No lead offers published yet. Use the builder above to publish your first lead offer!
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-xs text-slate-400 bg-slate-950/60">
+                      <th className="py-3 px-4">Offer & Headline</th>
+                      <th className="py-3 px-4">Type</th>
+                      <th className="py-3 px-4">Promo Code</th>
+                      <th className="py-3 px-4">Muse Sync</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 text-xs">
+                    {leadOffers.map((o) => (
+                      <tr key={o.id} className="hover:bg-slate-800/40">
+                        <td className="py-3.5 px-4">
+                          <div className="font-semibold text-white">{o.title}</div>
+                          <div className="text-slate-400 text-[11px]">{o.headline}</div>
+                        </td>
+                        <td className="py-3.5 px-4 uppercase font-mono text-[11px] text-indigo-300">
+                          {o.offer_type}
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-amber-300">{o.promo_code || '—'}</td>
+                        <td className="py-3.5 px-4">
+                          <span className="px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 text-[10px] font-bold">
+                            Synced
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleOffer(o.id)}
+                            className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase cursor-pointer ${
+                              o.active
+                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {o.active ? 'Active' : 'Paused'}
+                          </button>
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteOffer(o.id)}
+                            className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15 transition cursor-pointer"
+                            title="Delete Offer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         )}

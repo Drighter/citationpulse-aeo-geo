@@ -95,6 +95,39 @@ export interface ApiLogDoc {
   created_at: string;
 }
 
+export interface MuseConnectionDoc {
+  user_id: string;
+  api_url: string;
+  api_key_masked: string;
+  workspace_id: string;
+  business_name: string;
+  site_url: string;
+  industry: string;
+  tagline: string;
+  target_audience: string;
+  primary_location: string;
+  key_services: string[];
+  brand_voice: string;
+  synced_at: string;
+}
+
+export interface LeadOfferDoc {
+  id: string;
+  user_id: string;
+  title: string;
+  headline: string;
+  description: string;
+  offer_type: 'discount' | 'free_trial' | 'consultation' | 'lead_magnet' | 'custom';
+  promo_code: string;
+  cta_text: string;
+  cta_url: string;
+  expiration_text: string;
+  active: number;
+  synced_to_muse: number;
+  conversions_count: number;
+  created_at: string;
+}
+
 // Initialize Firebase Admin if credentials or emulator env vars are present
 let firestoreInstance: Firestore | null = null;
 let firebaseAuthInstance: Auth | null = null;
@@ -155,6 +188,8 @@ interface LocalFirestoreDump {
   api_keys: Record<string, ApiKeyDoc>;
   scans: Record<string, ScanDoc>;
   api_logs: Record<string, ApiLogDoc>;
+  muse_connections?: Record<string, MuseConnectionDoc>;
+  lead_offers?: Record<string, LeadOfferDoc>;
 }
 
 const dataDir = path.resolve(process.cwd(), 'data');
@@ -422,17 +457,113 @@ export const firestoreRepo = {
 
   async listApiLogsByUser(uid: string, limit = 30): Promise<ApiLogDoc[]> {
     if (firestoreInstance) {
-      const snap = await firestoreInstance
-        .collection('api_logs')
-        .where('user_id', '==', uid)
-        .orderBy('created_at', 'desc')
-        .limit(limit)
-        .get();
-      if (!snap.empty) return snap.docs.map((d: QueryDocumentSnapshot) => d.data() as ApiLogDoc);
+      try {
+        const snap = await firestoreInstance
+          .collection('api_logs')
+          .where('user_id', '==', uid)
+          .orderBy('created_at', 'desc')
+          .limit(limit)
+          .get();
+        if (!snap.empty) return snap.docs.map((d: QueryDocumentSnapshot) => d.data() as ApiLogDoc);
+      } catch {
+        firestoreInstance = null;
+      }
     }
     return Object.values(localData.api_logs)
       .filter((l) => l.user_id === uid)
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .slice(0, limit);
+  },
+
+  async getMuseConnection(uid: string): Promise<MuseConnectionDoc | null> {
+    if (firestoreInstance) {
+      try {
+        const snap = await firestoreInstance.collection('muse_connections').doc(uid).get();
+        if (snap.exists) return snap.data() as MuseConnectionDoc;
+      } catch {
+        firestoreInstance = null;
+      }
+    }
+    if (!localData.muse_connections) localData.muse_connections = {};
+    return localData.muse_connections[uid] || null;
+  },
+
+  async saveMuseConnection(conn: MuseConnectionDoc): Promise<MuseConnectionDoc> {
+    if (firestoreInstance) {
+      try {
+        await firestoreInstance.collection('muse_connections').doc(conn.user_id).set(conn, { merge: true });
+      } catch {
+        firestoreInstance = null;
+      }
+    }
+    if (!localData.muse_connections) localData.muse_connections = {};
+    localData.muse_connections[conn.user_id] = conn;
+    persistLocalStore();
+    return conn;
+  },
+
+  async listLeadOffers(uid: string): Promise<LeadOfferDoc[]> {
+    if (firestoreInstance) {
+      try {
+        const snap = await firestoreInstance
+          .collection('lead_offers')
+          .where('user_id', '==', uid)
+          .orderBy('created_at', 'desc')
+          .get();
+        if (!snap.empty) return snap.docs.map((d: QueryDocumentSnapshot) => d.data() as LeadOfferDoc);
+      } catch {
+        firestoreInstance = null;
+      }
+    }
+    if (!localData.lead_offers) localData.lead_offers = {};
+    return Object.values(localData.lead_offers)
+      .filter((o) => o.user_id === uid)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  },
+
+  async createLeadOffer(offer: LeadOfferDoc): Promise<LeadOfferDoc> {
+    if (firestoreInstance) {
+      try {
+        await firestoreInstance.collection('lead_offers').doc(offer.id).set(offer);
+      } catch {
+        firestoreInstance = null;
+      }
+    }
+    if (!localData.lead_offers) localData.lead_offers = {};
+    localData.lead_offers[offer.id] = offer;
+    persistLocalStore();
+    return offer;
+  },
+
+  async toggleLeadOffer(offerId: string, uid: string): Promise<LeadOfferDoc | null> {
+    if (!localData.lead_offers) localData.lead_offers = {};
+    const existing = localData.lead_offers[offerId];
+    if (!existing || existing.user_id !== uid) return null;
+    existing.active = existing.active === 1 ? 0 : 1;
+    if (firestoreInstance) {
+      try {
+        await firestoreInstance.collection('lead_offers').doc(offerId).update({ active: existing.active });
+      } catch {
+        firestoreInstance = null;
+      }
+    }
+    persistLocalStore();
+    return existing;
+  },
+
+  async deleteLeadOffer(offerId: string, uid: string): Promise<boolean> {
+    if (!localData.lead_offers) localData.lead_offers = {};
+    const existing = localData.lead_offers[offerId];
+    if (!existing || existing.user_id !== uid) return false;
+    delete localData.lead_offers[offerId];
+    if (firestoreInstance) {
+      try {
+        await firestoreInstance.collection('lead_offers').doc(offerId).delete();
+      } catch {
+        firestoreInstance = null;
+      }
+    }
+    persistLocalStore();
+    return true;
   },
 };

@@ -127,3 +127,36 @@ export interface ApiLogItem {
   latency_ms: number;
   created_at: string;
 }
+
+export interface MuseConnection {
+  user_id: string;
+  api_url: string;
+  api_key_masked: string;
+  workspace_id: string;
+  business_name: string;
+  site_url: string;
+  industry: string;
+  tagline: string;
+  target_audience: string;
+  primary_location: string;
+  key_services: string[];
+  brand_voice: string;
+  synced_at: string;
+}
+
+export interface LeadOffer {
+  id: string;
+  user_id: string;
+  title: string;
+  headline: string;
+  description: string;
+  offer_type: 'discount' | 'free_trial' | 'consultation' | 'lead_magnet' | 'custom';
+  promo_code: string;
+  cta_text: string;
+  cta_url: string;
+  expiration_text: string;
+  active: number;
+  synced_to_muse: number;
+  conversions_count: number;
+  created_at: string;
+}
