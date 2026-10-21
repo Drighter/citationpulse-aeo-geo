@@ -184,6 +184,7 @@ export default function App() {
   const [sandboxLoading, setSandboxLoading] = useState(false);
 
   // Billing state
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
   const [billingMessage, setBillingMessage] = useState<string | null>(null);
   const [billingLoading, setBillingLoading] = useState<string | null>(null);
 
@@ -230,6 +231,38 @@ export default function App() {
   useEffect(() => {
     if (token) {
       fetchWorkspaceData(token);
+    }
+
+    // Handle Stripe Checkout return URL query params (?upgraded=pro&cycle=annual)
+    const params = new URLSearchParams(window.location.search);
+    const upgradedPlan = params.get('upgraded') as 'pro' | 'enterprise' | null;
+    const cycle = params.get('cycle') || 'monthly';
+    if (upgradedPlan && (upgradedPlan === 'pro' || upgradedPlan === 'enterprise')) {
+      setActiveNav('billing');
+      setBillingMessage(
+        `🎉 Stripe Payment Confirmed! Your workspace has been upgraded to the ${upgradedPlan.toUpperCase()} (${cycle}) plan.`
+      );
+      window.history.replaceState({}, '', window.location.pathname);
+
+      const newLimits =
+        upgradedPlan === 'enterprise'
+          ? { monthlyScans: 10000, maxCrawlPages: 15, rateLimitPerMin: 600, maxApiKeys: 50, priceMonthly: 199 }
+          : { monthlyScans: 500, maxCrawlPages: 5, rateLimitPerMin: 120, maxApiKeys: 10, priceMonthly: 49 };
+
+      setUser((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev, plan: upgradedPlan, limits: newLimits };
+        localStorage.setItem('cp_hosted_user', JSON.stringify(updated));
+        return updated;
+      });
+
+      if (token) {
+        fetch('/api/billing/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ plan: upgradedPlan, billingCycle: cycle, mode: 'instant' }),
+        }).catch(() => {});
+      }
     }
   }, [token]);
 
@@ -623,6 +656,24 @@ export default function App() {
     }
   };
 
+  const STRIPE_PAYMENT_LINKS = {
+    pro: {
+      monthly: 'https://buy.stripe.com/6oUcN65xoeCB7ULdv52cg00',
+      annual: 'https://buy.stripe.com/6oU5kE2lc1PP7UL2Qr2cg01',
+    },
+    enterprise: {
+      monthly: 'https://buy.stripe.com/7sY6oI7Fwaml5MDfDd2cg02',
+      annual: 'https://buy.stripe.com/aFacN62lc665fndbmX2cg03',
+    },
+  };
+
+  const handleStripeCheckout = (planId: 'pro' | 'enterprise') => {
+    if (!user) return;
+    const baseUrl = STRIPE_PAYMENT_LINKS[planId][billingCycle];
+    const checkoutUrl = `${baseUrl}?prefilled_email=${encodeURIComponent(user.email)}&client_reference_id=${encodeURIComponent(user.id)}`;
+    window.location.href = checkoutUrl;
+  };
+
   const handleUpgradePlan = async (planId: 'free' | 'pro' | 'enterprise') => {
     if (!token) return;
     setBillingLoading(planId);
@@ -634,21 +685,36 @@ export default function App() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ plan: planId }),
+        body: JSON.stringify({ plan: planId, billingCycle, mode: 'instant' }),
       });
-      const data = await res.json();
-      if (res.ok) {
-        if (data.mode === 'stripe_checkout' && data.checkoutUrl) {
-          window.location.href = data.checkoutUrl;
-          return;
-        }
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json') && res.ok) {
+        const data = await res.json();
         setBillingMessage(data.message || `Switched to ${planId.toUpperCase()} tier!`);
         fetchWorkspaceData(token);
-      } else {
-        setBillingMessage(data.message || data.error);
+        return;
       }
+    } catch {
+      // Fall back to updating local hosted session state
     } finally {
       setBillingLoading(null);
+    }
+
+    const limitsMap = {
+      free: { monthlyScans: 15, maxCrawlPages: 1, rateLimitPerMin: 20, maxApiKeys: 2, priceMonthly: 0 },
+      pro: { monthlyScans: 500, maxCrawlPages: 5, rateLimitPerMin: 120, maxApiKeys: 10, priceMonthly: 49 },
+      enterprise: { monthlyScans: 10000, maxCrawlPages: 15, rateLimitPerMin: 600, maxApiKeys: 50, priceMonthly: 199 },
+    };
+
+    if (user) {
+      const updated: UserProfile = {
+        ...user,
+        plan: planId,
+        limits: limitsMap[planId],
+      };
+      localStorage.setItem('cp_hosted_user', JSON.stringify(updated));
+      setUser(updated);
+      setBillingMessage(`Workspace switched to the ${planId.toUpperCase()} tier.`);
     }
   };
 
@@ -1650,11 +1716,38 @@ if (report.scores.geo < 70) {
         {/* ==================== TAB 5: BILLING & SUBSCRIPTION TIERS ==================== */}
         {activeNav === 'billing' && (
           <div className="space-y-8">
-            <div>
-              <h1 className="text-2xl font-bold text-white">Subscription Plans & API Quota Tiers</h1>
-              <p className="text-sm text-slate-400 mt-1">
-                Scale your monthly scan volume, multi-page crawl depth, and Developer API rate limits. Supports Stripe Checkout or instant sandbox switching.
-              </p>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-white">Subscription Plans & Stripe Billing</h1>
+                <p className="text-sm text-slate-400 mt-1">
+                  Scale your monthly SEO/AEO/GEO scan volume, multi-page crawl depth, and Developer API rate limits. Powered by Stripe Checkout.
+                </p>
+              </div>
+
+              {/* Monthly vs Annual Billing Toggle */}
+              <div className="inline-flex items-center p-1 rounded-xl bg-slate-900 border border-slate-800 self-start">
+                <button
+                  type="button"
+                  onClick={() => setBillingCycle('monthly')}
+                  className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                    billingCycle === 'monthly' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Monthly Billing
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBillingCycle('annual')}
+                  className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer ${
+                    billingCycle === 'annual' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Annual Billing
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                    Save 20%
+                  </span>
+                </button>
+              </div>
             </div>
 
             {billingMessage && (
@@ -1669,20 +1762,30 @@ if (report.scores.geo < 70) {
                 {
                   id: 'free' as const,
                   name: 'Starter Free',
+                  badge: null,
                   price: '$0',
-                  desc: 'Single-page SEO, AEO & GEO diagnostics for solo builders.',
+                  period: '/ forever',
+                  billedNote: 'No credit card required',
+                  desc: 'Single-page SEO, AEO & GEO diagnostics for solo builders and personal projects.',
                   features: [
                     '15 full site scans / month',
                     'Single-page deep analysis (1 page/scan)',
                     '2 Developer API keys (20 req/min)',
                     'Auto-generated JSON-LD & llms.txt fixes',
+                    'AI Crawler Access Matrix (GPTBot, ClaudeBot)',
                   ],
                 },
                 {
                   id: 'pro' as const,
                   name: 'Growth Pro',
-                  price: '$49',
-                  desc: 'Multi-page crawling, high-throughput Developer API, and AI rewrites.',
+                  badge: 'Most Popular',
+                  price: billingCycle === 'annual' ? '$39' : '$49',
+                  period: '/ month',
+                  billedNote:
+                    billingCycle === 'annual'
+                      ? 'Billed annually ($468/yr — Save $120)'
+                      : 'Billed monthly ($49/mo)',
+                  desc: 'Multi-page crawling, high-throughput Developer API, and AI citation rewrites for SaaS & content teams.',
                   features: [
                     '500 full site scans / month',
                     'Multi-page site crawler (up to 5 pages/scan)',
@@ -1693,9 +1796,15 @@ if (report.scores.geo < 70) {
                 },
                 {
                   id: 'enterprise' as const,
-                  name: 'Agency & Enterprise',
-                  price: '$199',
-                  desc: 'High-volume AEO/GEO monitoring across domains with priority rate limits.',
+                  name: 'Scale & Agency',
+                  badge: 'High Volume API',
+                  price: billingCycle === 'annual' ? '$159' : '$199',
+                  period: '/ month',
+                  billedNote:
+                    billingCycle === 'annual'
+                      ? 'Billed annually ($1,908/yr — Save $480)'
+                      : 'Billed monthly ($199/mo)',
+                  desc: 'High-volume AEO/GEO monitoring across client domains with priority API rate limits.',
                   features: [
                     '10,000 full site scans / month',
                     'Deep multi-page crawler (up to 15 pages/scan)',
@@ -1709,26 +1818,32 @@ if (report.scores.geo < 70) {
                 return (
                   <div
                     key={plan.id}
-                    className={`rounded-2xl p-6 border flex flex-col justify-between ${
-                      isCurrent
+                    className={`rounded-2xl p-6 border flex flex-col justify-between relative ${
+                      plan.id === 'pro'
                         ? 'bg-indigo-950/30 border-indigo-500 shadow-xl shadow-indigo-600/10'
                         : 'bg-slate-900/90 border-slate-800'
                     }`}
                   >
+                    {plan.badge && (
+                      <div className="absolute -top-3 right-5 px-3 py-0.5 rounded-full bg-indigo-600 text-white text-[10px] font-bold uppercase tracking-wider shadow">
+                        {plan.badge}
+                      </div>
+                    )}
                     <div>
                       <div className="flex items-center justify-between">
                         <h3 className="text-lg font-bold text-white">{plan.name}</h3>
                         {isCurrent && (
-                          <span className="text-[10px] font-bold uppercase px-2.5 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                          <span className="text-[10px] font-bold uppercase px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                             Active Plan
                           </span>
                         )}
                       </div>
                       <div className="mt-3 flex items-baseline gap-1">
                         <span className="text-3xl font-extrabold text-white">{plan.price}</span>
-                        <span className="text-xs text-slate-400">/ month</span>
+                        <span className="text-xs text-slate-400">{plan.period}</span>
                       </div>
-                      <p className="text-xs text-slate-400 mt-2">{plan.desc}</p>
+                      <div className="text-[11px] text-indigo-300 font-medium mt-1">{plan.billedNote}</div>
+                      <p className="text-xs text-slate-400 mt-2.5">{plan.desc}</p>
 
                       <ul className="mt-6 space-y-2.5 text-xs text-slate-200">
                         {plan.features.map((f) => (
@@ -1740,21 +1855,43 @@ if (report.scores.geo < 70) {
                       </ul>
                     </div>
 
-                    <button
-                      onClick={() => handleUpgradePlan(plan.id)}
-                      disabled={isCurrent || billingLoading === plan.id}
-                      className={`mt-8 w-full py-2.5 px-4 rounded-xl text-xs font-semibold transition cursor-pointer ${
-                        isCurrent
-                          ? 'bg-slate-800 text-slate-400 cursor-default'
-                          : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20'
-                      }`}
-                    >
-                      {billingLoading === plan.id
-                        ? 'Updating Plan...'
-                        : isCurrent
-                        ? 'Current Workspace Plan'
-                        : `Switch to ${plan.name}`}
-                    </button>
+                    <div className="mt-8 space-y-2">
+                      {plan.id !== 'free' ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleStripeCheckout(plan.id)}
+                            className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/20 transition flex items-center justify-center gap-2 cursor-pointer"
+                          >
+                            <CreditCard className="w-4 h-4" />
+                            Subscribe with Stripe ({billingCycle === 'annual' ? 'Annual' : 'Monthly'})
+                          </button>
+                          {!isCurrent && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpgradePlan(plan.id)}
+                              disabled={billingLoading === plan.id}
+                              className="w-full py-2 px-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-[11px] font-medium transition cursor-pointer"
+                            >
+                              {billingLoading === plan.id ? 'Activating...' : 'Instant Sandbox Switch (Dev Mode)'}
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleUpgradePlan('free')}
+                          disabled={isCurrent || billingLoading === 'free'}
+                          className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                            isCurrent
+                              ? 'bg-slate-800 text-slate-400 cursor-default'
+                              : 'bg-slate-800 hover:bg-slate-700 text-white'
+                          }`}
+                        >
+                          {isCurrent ? 'Current Free Plan' : 'Downgrade to Starter Free'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}

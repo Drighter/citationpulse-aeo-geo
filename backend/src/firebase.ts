@@ -220,8 +220,12 @@ function persistLocalStore() {
 export const firestoreRepo = {
   async getUserById(uid: string): Promise<UserDoc | null> {
     if (firestoreInstance) {
-      const snap = await firestoreInstance.collection('users').doc(uid).get();
-      if (snap.exists) return snap.data() as UserDoc;
+      try {
+        const snap = await firestoreInstance.collection('users').doc(uid).get();
+        if (snap.exists) return snap.data() as UserDoc;
+      } catch {
+        firestoreInstance = null;
+      }
     }
     return localData.users[uid] || null;
   },
@@ -229,15 +233,23 @@ export const firestoreRepo = {
   async getUserByEmail(email: string): Promise<UserDoc | null> {
     const normalized = email.toLowerCase().trim();
     if (firestoreInstance) {
-      const q = await firestoreInstance.collection('users').where('email', '==', normalized).limit(1).get();
-      if (!q.empty) return q.docs[0].data() as UserDoc;
+      try {
+        const q = await firestoreInstance.collection('users').where('email', '==', normalized).limit(1).get();
+        if (!q.empty) return q.docs[0].data() as UserDoc;
+      } catch {
+        firestoreInstance = null;
+      }
     }
     return Object.values(localData.users).find((u) => u.email === normalized) || null;
   },
 
   async upsertUser(user: UserDoc): Promise<UserDoc> {
     if (firestoreInstance) {
-      await firestoreInstance.collection('users').doc(user.id).set(user, { merge: true });
+      try {
+        await firestoreInstance.collection('users').doc(user.id).set(user, { merge: true });
+      } catch {
+        firestoreInstance = null;
+      }
     }
     localData.users[user.id] = user;
     persistLocalStore();

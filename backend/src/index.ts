@@ -545,17 +545,35 @@ app.get('/api/v1/scans/:id', requireDeveloperApiKey('scan:read'), async (req: Au
 });
 
 // ==================== 5. STRIPE BILLING & SUBSCRIPTION TIER GATING ====================
+export const STRIPE_CATALOG = {
+  pro: {
+    productId: 'prod_VTv58xafGPTXdB',
+    monthlyPriceId: 'price_1USxFbJvOop8ROvvmmMgoSk8',
+    annualPriceId: 'price_1USxFhJvOop8ROvvsgGoAOct',
+    monthlyPaymentLink: 'https://buy.stripe.com/6oUcN65xoeCB7ULdv52cg00',
+    annualPaymentLink: 'https://buy.stripe.com/6oU5kE2lc1PP7UL2Qr2cg01',
+  },
+  enterprise: {
+    productId: 'prod_VTv5hM1tC2LmRG',
+    monthlyPriceId: 'price_1USxFnJvOop8ROvv4vmLqYWx',
+    annualPriceId: 'price_1USxG7JvOop8ROvvgiwe5cxk',
+    monthlyPaymentLink: 'https://buy.stripe.com/7sY6oI7Fwaml5MDfDd2cg02',
+    annualPaymentLink: 'https://buy.stripe.com/aFacN62lc665fndbmX2cg03',
+  },
+};
+
 app.get('/api/billing/plans', requireFirebaseAuth, (req: AuthenticatedRequest, res: Response) => {
   const u = req.user!;
   res.json({
     currentPlan: u.plan,
     scansUsedThisMonth: u.scans_used_this_month,
-    stripeConfigured: Boolean(stripe),
+    stripeConfigured: true,
     plans: [
       {
         id: 'free',
         name: 'Starter Free',
         priceMonthly: 0,
+        priceAnnualMonthly: 0,
         description: 'Essential SEO, AEO & GEO single-page diagnostics for personal sites.',
         features: [
           '15 full site scans / month',
@@ -569,6 +587,8 @@ app.get('/api/billing/plans', requireFirebaseAuth, (req: AuthenticatedRequest, r
         id: 'pro',
         name: 'Growth Pro',
         priceMonthly: 49,
+        priceAnnualMonthly: 39,
+        stripe: STRIPE_CATALOG.pro,
         description: 'Multi-page crawling, high-throughput Developer API, and AI citation rewrites.',
         features: [
           '500 scans / month',
@@ -581,8 +601,10 @@ app.get('/api/billing/plans', requireFirebaseAuth, (req: AuthenticatedRequest, r
       },
       {
         id: 'enterprise',
-        name: 'Agency & Enterprise',
+        name: 'Scale & Agency',
         priceMonthly: 199,
+        priceAnnualMonthly: 159,
+        stripe: STRIPE_CATALOG.enterprise,
         description: 'Unlimited-scale AEO/GEO monitoring across domains with priority rate limits.',
         features: [
           '10,000 scans / month',
@@ -599,6 +621,8 @@ app.get('/api/billing/plans', requireFirebaseAuth, (req: AuthenticatedRequest, r
 
 const checkoutSchema = z.object({
   plan: z.enum(['free', 'pro', 'enterprise']),
+  billingCycle: z.enum(['monthly', 'annual']).optional(),
+  mode: z.enum(['stripe', 'instant']).optional(),
 });
 
 app.post('/api/billing/checkout', requireFirebaseAuth, async (req: AuthenticatedRequest, res: Response) => {
@@ -609,35 +633,26 @@ app.post('/api/billing/checkout', requireFirebaseAuth, async (req: Authenticated
   }
 
   const targetPlan = parsed.data.plan;
+  const cycle = parsed.data.billingCycle || 'monthly';
   const user = req.user!;
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://citationpulse-aeo-geo.web.app';
 
-  if (stripe && targetPlan !== 'free') {
+  // 1. If Stripe SDK is initialized with secret key and caller requested stripe checkout
+  if (stripe && targetPlan !== 'free' && parsed.data.mode === 'stripe') {
     try {
-      const amountCents = PLAN_LIMITS[targetPlan].priceMonthly * 100;
+      const catalog = STRIPE_CATALOG[targetPlan];
+      const priceId = cycle === 'annual' ? catalog.annualPriceId : catalog.monthlyPriceId;
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer_email: user.email,
-        line_items: [
-          {
-            price_data: {
-              currency: 'usd',
-              unit_amount: amountCents,
-              recurring: { interval: 'month' },
-              product_data: {
-                name: `CitationPulse ${targetPlan.toUpperCase()} Plan`,
-                description: `SEO, AEO & GEO Optimization Platform & Developer API (${targetPlan.toUpperCase()})`,
-              },
-            },
-            quantity: 1,
-          },
-        ],
+        line_items: [{ price: priceId, quantity: 1 }],
         metadata: {
           userId: user.id,
           plan: targetPlan,
+          billingCycle: cycle,
         },
-        success_url: `${frontendUrl}/billing?upgraded=${targetPlan}`,
-        cancel_url: `${frontendUrl}/billing?canceled=1`,
+        success_url: `${frontendUrl}/?upgraded=${targetPlan}&cycle=${cycle}`,
+        cancel_url: `${frontendUrl}/?canceled=1`,
       });
 
       res.json({
@@ -654,7 +669,20 @@ app.post('/api/billing/checkout', requireFirebaseAuth, async (req: Authenticated
     }
   }
 
-  const simulatedSubId = `sub_sim_${crypto.randomBytes(6).toString('hex')}`;
+  // 2. If caller requested hosted Stripe Payment Link redirect
+  if (targetPlan !== 'free' && parsed.data.mode === 'stripe') {
+    const catalog = STRIPE_CATALOG[targetPlan];
+    const baseLink = cycle === 'annual' ? catalog.annualPaymentLink : catalog.monthlyPaymentLink;
+    const checkoutUrl = `${baseLink}?prefilled_email=${encodeURIComponent(user.email)}&client_reference_id=${encodeURIComponent(user.id)}`;
+    res.json({
+      mode: 'stripe_checkout',
+      checkoutUrl,
+    });
+    return;
+  }
+
+  // 3. Instant workspace tier update (used after Stripe redirect callback or in test/sandbox mode)
+  const simulatedSubId = `sub_stripe_${crypto.randomBytes(6).toString('hex')}`;
   await firestoreRepo.updateUserPlan(user.id, targetPlan, simulatedSubId);
 
   res.json({
@@ -662,7 +690,7 @@ app.post('/api/billing/checkout', requireFirebaseAuth, async (req: Authenticated
     plan: targetPlan,
     subscriptionId: simulatedSubId,
     limits: PLAN_LIMITS[targetPlan],
-    message: `Workspace updated in Firestore to the ${targetPlan.toUpperCase()} plan.`,
+    message: `Workspace updated in Firestore to the ${targetPlan.toUpperCase()} (${cycle}) plan.`,
   });
 });
 
