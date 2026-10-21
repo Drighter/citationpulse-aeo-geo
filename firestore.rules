@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can read/write their own profile; backend Admin SDK bypasses rules for server-side updates
+    match /users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false; // Managed via Backend Firebase Admin SDK
+    }
+
+    // Scans belong to authenticated users
+    match /scans/{scanId} {
+      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
+      allow write: if false; // Created via Backend Scanner API
+    }
+
+    // API Keys belong to authenticated users
+    match /api_keys/{keyId} {
+      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
+      allow write: if false;
+    }
+
+    // API Logs belong to authenticated users
+    match /api_logs/{logId} {
+      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
+      allow write: if false;
+    }
+  }
+}

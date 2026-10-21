@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Build outputs
+backend/dist/
+frontend/dist/
+
+# Local runtime data & databases
+backend/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Environment secrets
+.env
+backend/.env
+frontend/.env
+.env.local
+.env.*.local
+
+# Firebase cache & logs
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,14 @@
+{
+  "name": "aeo-geo-seo-saas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Full-Stack SEO, AEO & GEO Optimization SaaS Platform & Developer API",
+  "scripts": {
+    "dev": "concurrently -n \"API,WEB\" -c \"cyan,magenta\" \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "build": "npm run build --prefix backend; npm run build --prefix frontend",
+    "test": "npm run test --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
