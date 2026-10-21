@@ -55,11 +55,27 @@ export async function firebaseEmailSignUp(name: string, email: string, password:
   return cred.user.getIdToken(true);
 }
 
-export async function firebaseGoogleSignIn(): Promise<string> {
+export interface GoogleAuthResult {
+  idToken: string;
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL: string | null;
+}
+
+export async function firebaseGoogleSignIn(): Promise<GoogleAuthResult> {
   if (!firebaseAuth) throw new Error('Firebase client SDK not configured');
   const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
   const cred = await signInWithPopup(firebaseAuth, provider);
-  return cred.user.getIdToken();
+  const idToken = await cred.user.getIdToken();
+  return {
+    idToken,
+    uid: cred.user.uid,
+    email: cred.user.email || `${cred.user.uid}@google.user`,
+    displayName: cred.user.displayName || cred.user.email?.split('@')[0] || 'Google Workspace User',
+    photoURL: cred.user.photoURL,
+  };
 }
 
 export async function firebaseLogout(): Promise<void> {
