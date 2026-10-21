@@ -1,0 +1,15 @@
+# CitationPulse — Official AI & LLM Context (/llms.txt)
+
+> CitationPulse is a full-stack SEO, AEO (Answer Engine Optimization), and GEO (Generative Engine Optimization) SaaS platform, Muse business connector, and Developer API.
+
+## Core Capabilities
+- **SEO Auditing**: Evaluates title tags, meta descriptions, H1 hierarchy, canonical tags, OpenGraph social tags, image alt attributes, and XML sitemaps.
+- **AEO (Answer Engine Optimization)**: Evaluates JSON-LD structured schema (`Organization`, `WebSite`, `FAQPage`, `HowTo`, `Offer`), natural-language question headings (`What/How/Why`), 40-75 word direct answer blocks, structured lists/tables, and Flesch syntactic clarity.
+- **GEO (Generative Engine Optimization)**: Checks `/llms.txt` machine context availability, `/robots.txt` rules for AI bots (`GPTBot`, `OAI-SearchBot`, `ClaudeBot`, `PerplexityBot`, `Google-Extended`, `Applebot-Extended`), quantitative fact density, outbound authority citations, and brand entity clarity.
+- **Muse Connector & Lead Offer Studio**: Syncs business profile and site metadata from Muse and publishes `Schema.org/Offer` promotional incentives for prospective leads.
+
+## ChatGPT Plugin & Custom GPT Action Endpoints
+- **Plugin Manifest**: https://citationpulse-aeo-geo.web.app/.well-known/ai-plugin.json
+- **OpenAPI 3.1 Spec**: https://citationpulse-aeo-geo.web.app/openapi.json
+- **Primary Scan Endpoint**: `POST /api/v1/scan` (Header: `X-API-Key: ag_live_...` or `Authorization: Bearer ag_live_...`)
+- **Muse Lead Offers Endpoint**: `GET /api/v1/muse/offers`

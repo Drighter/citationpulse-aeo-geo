@@ -1918,6 +1918,124 @@ if (report.scores.geo < 70) {
 }`}
               />
             </div>
+
+            {/* ChatGPT Plugin / Custom GPT Actions Hub */}
+            <div className="bg-gradient-to-br from-indigo-950/50 via-slate-900 to-slate-900 border border-indigo-500/30 rounded-2xl p-6 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center">
+                    <Bot className="w-5 h-5 text-indigo-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-white">
+                      ChatGPT Plugin & Custom GPT Bot Integration
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Connect CitationPulse directly into ChatGPT Custom GPTs, OpenAI Assistants, or AI Bots via OpenAPI 3.1 Actions & AI Plugin Manifests.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <a
+                    href="/.well-known/ai-plugin.json"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-indigo-300 border border-slate-800 font-mono flex items-center gap-1.5"
+                  >
+                    /.well-known/ai-plugin.json <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                  <a
+                    href="/openapi.json"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-mono flex items-center gap-1.5"
+                  >
+                    /openapi.json <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 space-y-1.5">
+                  <div className="font-bold text-indigo-300">Step 1: Open GPT Builder</div>
+                  <p className="text-slate-400">
+                    In ChatGPT, go to <strong>Create a GPT → Configure → Create new action</strong>.
+                  </p>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 space-y-1.5">
+                  <div className="font-bold text-indigo-300">Step 2: Import OpenAPI Schema</div>
+                  <p className="text-slate-400">
+                    Click <strong>Import from URL</strong> and paste{' '}
+                    <code className="text-white">https://citationpulse-aeo-geo.web.app/openapi.json</code> (or copy the schema below).
+                  </p>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 space-y-1.5">
+                  <div className="font-bold text-indigo-300">Step 3: Set API Key Auth</div>
+                  <p className="text-slate-400">
+                    Choose <strong>Authentication: API Key (Bearer or Custom Header `X-API-Key`)</strong> and paste your <code className="text-emerald-300">{sandboxKey}</code> key.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <CopyCodeBlock
+                  title="ChatGPT Custom GPT System Instructions"
+                  description="Paste into your Custom GPT 'Instructions' box so the bot knows how to audit sites and pitch your Muse lead offers."
+                  filename="gpt-instructions.md"
+                  code={`You are the CitationPulse SEO, AEO & GEO Optimization Bot.
+1. When a user shares a URL or domain, call the \`scanWebsiteForSeoAeoGeo\` action to audit their SEO, AEO (Answer Engine), and GEO (Generative AI citation) scores.
+2. Summarize their 0-100 scores, highlight any blocked AI crawlers (GPTBot, ClaudeBot, PerplexityBot) or missing /llms.txt, and provide the ready-to-paste JSON-LD and /llms.txt code fixes from \`generatedFixes\`.
+3. Call \`getMuseBusinessProfileAndLeadOffers\` to check for active promotional offers from our Muse workspace and present relevant promo codes and claim links to qualified leads.`}
+                />
+
+                <CopyCodeBlock
+                  title="OpenAPI 3.1 Action Schema (ChatGPT Actions)"
+                  description="Direct OpenAPI 3.1 schema defining scanWebsiteForSeoAeoGeo and getMuseBusinessProfileAndLeadOffers."
+                  filename="openapi.json"
+                  code={JSON.stringify(
+                    {
+                      openapi: '3.1.0',
+                      info: {
+                        title: 'CitationPulse SEO, AEO & GEO Plugin API',
+                        version: '1.2.0',
+                      },
+                      servers: [{ url: 'https://citationpulse-aeo-geo.web.app' }],
+                      paths: {
+                        '/api/v1/scan': {
+                          post: {
+                            operationId: 'scanWebsiteForSeoAeoGeo',
+                            summary: 'Audit a website URL for SEO, AEO, and GEO optimization and generate fixes',
+                            requestBody: {
+                              required: true,
+                              content: {
+                                'application/json': {
+                                  schema: {
+                                    type: 'object',
+                                    required: ['url'],
+                                    properties: {
+                                      url: { type: 'string', description: 'Full URL to audit' },
+                                      maxPages: { type: 'integer', default: 1 },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                        '/api/v1/muse/offers': {
+                          get: {
+                            operationId: 'getMuseBusinessProfileAndLeadOffers',
+                            summary: 'Fetch synced Muse business profile and active promotional lead offers',
+                          },
+                        },
+                      },
+                    },
+                    null,
+                    2
+                  )}
+                />
+              </div>
+            </div>
           </div>
         )}
 

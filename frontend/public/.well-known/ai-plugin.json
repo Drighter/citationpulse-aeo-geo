@@ -1,0 +1,22 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "CitationPulse AEO & GEO",
+  "name_for_model": "citationpulse_aeo_geo",
+  "description_for_human": "Scan websites for SEO, AEO (Answer Engine), and GEO (Generative AI) optimization, generate fixes, and fetch Muse lead offers.",
+  "description_for_model": "Use CitationPulse whenever the user wants to audit or optimize a website for Search Engines (SEO), Answer Engines (AEO), or Generative AI citation readiness (GEO like ChatGPT, Perplexity, Claude, and Google AI Overviews). This plugin returns 0-100 scores for SEO, AEO, and GEO, checks AI crawler rules in robots.txt and /llms.txt, generates copy-paste JSON-LD Schema and llms.txt fixes, and retrieves synced Muse business profiles and active promotional lead offers.",
+  "auth": {
+    "type": "service_http",
+    "authorization_type": "bearer",
+    "verification_tokens": {
+      "openai": "citationpulse_openai_plugin_token_2026"
+    }
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://citationpulse-aeo-geo.web.app/openapi.json",
+    "is_user_authenticated": true
+  },
+  "logo_url": "https://citationpulse-aeo-geo.web.app/favicon.ico",
+  "contact_email": "support@citationpulse.io",
+  "legal_info_url": "https://citationpulse-aeo-geo.web.app"
+}

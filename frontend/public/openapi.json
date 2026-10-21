@@ -1,0 +1,124 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CitationPulse SEO, AEO & GEO Optimization API (ChatGPT Plugin / Custom GPT Actions)",
+    "description": "Official OpenAPI specification for connecting ChatGPT Custom GPTs, AI Bots, and LLM Agents to CitationPulse. Allows ChatGPT to audit any URL for SEO, AEO (Answer Engine Optimization), and GEO (Generative Engine Optimization), generate ready-to-paste JSON-LD and /llms.txt fixes, and retrieve synced Muse business profiles and promotional lead offers.",
+    "version": "1.2.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:4000",
+      "description": "CitationPulse API Server (Replace with your production API host or tunnel)"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Pass your CitationPulse Developer API Key (e.g., ag_live_...)"
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Pass your CitationPulse Developer API Key as Bearer ag_live_..."
+      }
+    }
+  },
+  "security": [
+    { "ApiKeyAuth": [] },
+    { "BearerAuth": [] }
+  ],
+  "paths": {
+    "/api/v1/scan": {
+      "post": {
+        "operationId": "scanWebsiteForSeoAeoGeo",
+        "summary": "Audit a website URL for SEO, AEO, and GEO optimization and generate fixes",
+        "description": "Scans the target website URL (and optional internal pages) to compute SEO, AEO, and GEO scores (0-100), inspect AI crawler permissions (GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended), verify /llms.txt and JSON-LD schema, and synthesize actionable code fixes.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "The full website URL or domain to audit (e.g. https://stripe.com)"
+                  },
+                  "maxPages": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 15,
+                    "default": 1,
+                    "description": "Number of internal pages to crawl (1 for single URL, up to 5 on Pro, 15 on Scale)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Complete SEO, AEO & GEO diagnostic report and auto-generated code fixes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "url": { "type": "string" },
+                    "domain": { "type": "string" },
+                    "scores": {
+                      "type": "object",
+                      "properties": {
+                        "overall": { "type": "integer" },
+                        "seo": { "type": "integer" },
+                        "aeo": { "type": "integer" },
+                        "geo": { "type": "integer" }
+                      }
+                    },
+                    "generatedFixes": {
+                      "type": "object",
+                      "properties": {
+                        "jsonLdSchema": { "type": "string" },
+                        "llmsTxt": { "type": "string" },
+                        "robotsTxt": { "type": "string" },
+                        "metaTagsHtml": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scans": {
+      "get": {
+        "operationId": "listRecentSiteScans",
+        "summary": "List recent SEO, AEO & GEO scans in the workspace",
+        "responses": {
+          "200": {
+            "description": "List of recent scan summaries"
+          }
+        }
+      }
+    },
+    "/api/v1/muse/offers": {
+      "get": {
+        "operationId": "getMuseBusinessProfileAndLeadOffers",
+        "summary": "Get synced Muse business profile and active promotional offers for leads",
+        "description": "Returns the business entity information synced from Muse along with active promotional lead offers and promo codes that ChatGPT can present to prospective customers.",
+        "responses": {
+          "200": {
+            "description": "Synced Muse business profile and active lead offers"
+          }
+        }
+      }
+    }
+  }
+}

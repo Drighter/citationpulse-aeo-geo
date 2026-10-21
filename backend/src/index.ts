@@ -35,8 +35,89 @@ app.get('/api/health', (_req, res) => {
     status: 'ok',
     service: 'CitationPulse SEO/AEO/GEO Platform & Developer API (Firebase Edition)',
     database: isCloudFirestoreActive() ? 'cloud_firestore' : 'firebase_local_firestore',
-    version: '1.1.0',
+    version: '1.2.0',
     timestamp: new Date().toISOString(),
+  });
+});
+
+// ==================== CHATGPT PLUGIN & CUSTOM GPT ACTIONS MANIFESTS ====================
+app.get('/.well-known/ai-plugin.json', (req, res) => {
+  const host = `${req.protocol}://${req.get('host')}`;
+  res.json({
+    schema_version: 'v1',
+    name_for_human: 'CitationPulse AEO & GEO',
+    name_for_model: 'citationpulse_aeo_geo',
+    description_for_human:
+      'Scan websites for SEO, AEO (Answer Engine), and GEO (Generative AI) optimization, generate fixes, and fetch Muse lead offers.',
+    description_for_model:
+      'Use CitationPulse whenever the user wants to audit or optimize a website for Search Engines (SEO), Answer Engines (AEO), or Generative AI citation readiness (GEO like ChatGPT, Perplexity, Claude, and Google AI Overviews). Returns 0-100 scores, checks AI bot rules in robots.txt and /llms.txt, generates JSON-LD Schema and llms.txt fixes, and retrieves synced Muse business profiles and active promotional lead offers.',
+    auth: {
+      type: 'service_http',
+      authorization_type: 'bearer',
+      verification_tokens: {
+        openai: 'citationpulse_openai_plugin_token_2026',
+      },
+    },
+    api: {
+      type: 'openapi',
+      url: `${host}/openapi.json`,
+      is_user_authenticated: true,
+    },
+    logo_url: 'https://citationpulse-aeo-geo.web.app/favicon.ico',
+    contact_email: 'support@citationpulse.io',
+    legal_info_url: 'https://citationpulse-aeo-geo.web.app',
+  });
+});
+
+app.get('/openapi.json', (req, res) => {
+  const host = `${req.protocol}://${req.get('host')}`;
+  res.json({
+    openapi: '3.1.0',
+    info: {
+      title: 'CitationPulse SEO, AEO & GEO Optimization API (ChatGPT Plugin / Custom GPT Actions)',
+      description:
+        'Official OpenAPI 3.1 specification for connecting ChatGPT Custom GPTs, AI Bots, and LLM Agents to CitationPulse.',
+      version: '1.2.0',
+    },
+    servers: [{ url: host }],
+    paths: {
+      '/api/v1/scan': {
+        post: {
+          operationId: 'scanWebsiteForSeoAeoGeo',
+          summary: 'Audit a website URL for SEO, AEO, and GEO optimization and generate fixes',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['url'],
+                  properties: {
+                    url: { type: 'string', description: 'Website URL to scan (e.g. https://stripe.com)' },
+                    maxPages: { type: 'integer', default: 1 },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'SEO, AEO & GEO diagnostic report and generated fixes' } },
+        },
+      },
+      '/api/v1/scans': {
+        get: {
+          operationId: 'listRecentSiteScans',
+          summary: 'List recent SEO, AEO & GEO scans in the workspace',
+          responses: { '200': { description: 'Recent scan summaries' } },
+        },
+      },
+      '/api/v1/muse/offers': {
+        get: {
+          operationId: 'getMuseBusinessProfileAndLeadOffers',
+          summary: 'Get synced Muse business profile and active promotional offers for leads',
+          responses: { '200': { description: 'Synced Muse business profile and active lead offers' } },
+        },
+      },
+    },
   });
 });
 
