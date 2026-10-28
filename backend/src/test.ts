@@ -201,7 +201,9 @@ async function runTests() {
       headers: { Authorization: `Bearer ${loginData.token}` },
     });
     assert.strictEqual(adminListRes.status, 200);
-    const adminUsers = (await adminListRes.json()) as Array<{ id: string; email: string; plan: string; role: string }>;
+    const { users: adminUsers } = (await adminListRes.json()) as {
+      users: Array<{ id: string; email: string; plan: string; role: string }>;
+    };
     assert.ok(adminUsers.length >= 1, 'Expected at least 1 user in admin directory');
 
     const createUserRes = await fetch(`${apiBase}/api/admin/users`, {
@@ -218,7 +220,9 @@ async function runTests() {
       }),
     });
     assert.strictEqual(createUserRes.status, 201);
-    const createdUser = (await createUserRes.json()) as { id: string; plan: string };
+    const { user: createdUser } = (await createUserRes.json()) as {
+      user: { id: string; plan: string };
+    };
 
     const patchUserRes = await fetch(`${apiBase}/api/admin/users/${createdUser.id}`, {
       method: 'PATCH',
@@ -229,7 +233,9 @@ async function runTests() {
       body: JSON.stringify({ plan: 'enterprise', role: 'admin' }),
     });
     assert.strictEqual(patchUserRes.status, 200);
-    const patchedUser = (await patchUserRes.json()) as { plan: string; role: string };
+    const { user: patchedUser } = (await patchUserRes.json()) as {
+      user: { plan: string; role: string };
+    };
     assert.strictEqual(patchedUser.plan, 'enterprise');
     assert.strictEqual(patchedUser.role, 'admin');
 
