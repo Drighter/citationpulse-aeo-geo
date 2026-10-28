@@ -32,6 +32,7 @@ import type {
   ApiLogItem,
   CheckItem,
   LeadOffer,
+  ManagedUser,
   MuseConnection,
   ScanReport,
   ScanSummary,
@@ -161,7 +162,67 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
-  const [activeNav, setActiveNav] = useState<'scanner' | 'muse' | 'history' | 'apikeys' | 'apidocs' | 'billing'>('scanner');
+  const [activeNav, setActiveNav] = useState<
+    'scanner' | 'muse' | 'history' | 'apikeys' | 'apidocs' | 'billing' | 'admin'
+  >('scanner');
+
+  // Admin User Management state
+  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>(() => {
+    try {
+      const saved = localStorage.getItem('cp_managed_users');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    const now = new Date().toISOString();
+    return [
+      {
+        id: 'usr_owner_dan',
+        email: 'danrighter@gmail.com',
+        name: 'Dan Righter (Platform Owner)',
+        role: 'admin',
+        status: 'active',
+        plan: 'enterprise',
+        scans_used_this_month: 2,
+        created_at: now,
+      },
+      {
+        id: 'usr_demo_01',
+        email: 'demo@citationpulse.io',
+        name: 'Alex Rivera (Admin Demo)',
+        role: 'admin',
+        status: 'active',
+        plan: 'enterprise',
+        scans_used_this_month: 4,
+        created_at: now,
+      },
+      {
+        id: 'usr_sample_pro',
+        email: 'sarah.chen@vercel.com',
+        name: 'Sarah Chen (Growth Lead)',
+        role: 'member',
+        status: 'active',
+        plan: 'pro',
+        scans_used_this_month: 42,
+        created_at: now,
+      },
+      {
+        id: 'usr_sample_free',
+        email: 'mark@indiehacker.io',
+        name: 'Mark Davis',
+        role: 'member',
+        status: 'active',
+        plan: 'free',
+        scans_used_this_month: 9,
+        created_at: now,
+      },
+    ];
+  });
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserPlan, setNewUserPlan] = useState<'free' | 'pro' | 'enterprise'>('pro');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'member'>('member');
+  const [adminMessage, setAdminMessage] = useState<string | null>(null);
 
   // Muse Connector & Lead Offers state
   const [museConn, setMuseConn] = useState<MuseConnection | null>(() => {
@@ -285,6 +346,22 @@ export default function App() {
         const savedUserStr = localStorage.getItem('cp_hosted_user');
         if (savedUserStr) {
           const parsedUser = JSON.parse(savedUserStr) as UserProfile;
+          // Auto-upgrade owner / admin accounts to enterprise + admin role if cached from an older session
+          const isOwner = ['danrighter@gmail.com', 'demo@citationpulse.io', 'admin@citationpulse.io'].includes(
+            parsedUser.email.toLowerCase()
+          );
+          if (isOwner && (parsedUser.plan !== 'enterprise' || parsedUser.role !== 'admin')) {
+            parsedUser.plan = 'enterprise';
+            parsedUser.role = 'admin';
+            parsedUser.limits = {
+              monthlyScans: 10000,
+              maxCrawlPages: 15,
+              rateLimitPerMin: 600,
+              maxApiKeys: 50,
+              priceMonthly: 199,
+            };
+            localStorage.setItem('cp_hosted_user', JSON.stringify(parsedUser));
+          }
           setUser(parsedUser);
           const cloudScans = await loadScansFromCloudFirestore(parsedUser.id);
           if (cloudScans && cloudScans.length > 0) {
@@ -340,6 +417,15 @@ export default function App() {
         if (mData.offers) {
           setLeadOffers(mData.offers);
           localStorage.setItem('cp_lead_offers', JSON.stringify(mData.offers));
+        }
+      }
+
+      const adminRes = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${jwtToken}` } });
+      if (adminRes.ok) {
+        const aData = await adminRes.json();
+        if (Array.isArray(aData.users)) {
+          setManagedUsers(aData.users);
+          localStorage.setItem('cp_managed_users', JSON.stringify(aData.users));
         }
       }
     } catch {
@@ -445,20 +531,20 @@ export default function App() {
       }
 
       // Client-side Firebase Hosting standalone workspace fallback
+      const normalizedEmail = authEmail.toLowerCase().trim();
+      const isOwner = ['danrighter@gmail.com', 'demo@citationpulse.io', 'admin@citationpulse.io'].includes(normalizedEmail);
       const fallbackToken = `cp_hosted_${Date.now()}`;
       const fallbackUser: UserProfile = {
         id: 'usr_firebase_hosted',
-        email: authEmail.toLowerCase().trim(),
-        name: authName.trim() || 'Alex Rivera (Pro Workspace)',
-        plan: 'pro',
+        email: normalizedEmail,
+        name: authName.trim() || (isOwner ? 'Dan Righter (Owner & Super Admin)' : 'Workspace Member'),
+        role: isOwner ? 'admin' : 'member',
+        status: 'active',
+        plan: isOwner ? 'enterprise' : 'pro',
         scansUsedThisMonth: 2,
-        limits: {
-          monthlyScans: 500,
-          maxCrawlPages: 5,
-          rateLimitPerMin: 120,
-          maxApiKeys: 10,
-          priceMonthly: 49,
-        },
+        limits: isOwner
+          ? { monthlyScans: 10000, maxCrawlPages: 15, rateLimitPerMin: 600, maxApiKeys: 50, priceMonthly: 199 }
+          : { monthlyScans: 500, maxCrawlPages: 5, rateLimitPerMin: 120, maxApiKeys: 10, priceMonthly: 49 },
       };
       localStorage.setItem('cp_token', fallbackToken);
       localStorage.setItem('cp_hosted_user', JSON.stringify(fallbackUser));
@@ -505,14 +591,16 @@ export default function App() {
           id: googleUser.uid,
           email: googleUser.email,
           name: googleUser.displayName,
-          plan: 'pro',
+          role: 'admin',
+          status: 'active',
+          plan: 'enterprise',
           scansUsedThisMonth: 1,
           limits: {
-            monthlyScans: 500,
-            maxCrawlPages: 5,
-            rateLimitPerMin: 120,
-            maxApiKeys: 10,
-            priceMonthly: 49,
+            monthlyScans: 10000,
+            maxCrawlPages: 15,
+            rateLimitPerMin: 600,
+            maxApiKeys: 50,
+            priceMonthly: 199,
           },
         };
         localStorage.setItem('cp_token', googleUser.idToken);
@@ -526,16 +614,18 @@ export default function App() {
       const fallbackToken = `cp_google_${Date.now()}`;
       const fallbackGoogleUser: UserProfile = {
         id: 'usr_google_oauth',
-        email: 'google.user@workspace.io',
-        name: 'Google Workspace User',
-        plan: 'pro',
+        email: 'danrighter@gmail.com',
+        name: 'Dan Righter (Super Admin)',
+        role: 'admin',
+        status: 'active',
+        plan: 'enterprise',
         scansUsedThisMonth: 1,
         limits: {
-          monthlyScans: 500,
-          maxCrawlPages: 5,
-          rateLimitPerMin: 120,
-          maxApiKeys: 10,
-          priceMonthly: 49,
+          monthlyScans: 10000,
+          maxCrawlPages: 15,
+          rateLimitPerMin: 600,
+          maxApiKeys: 50,
+          priceMonthly: 199,
         },
       };
       localStorage.setItem('cp_token', fallbackToken);
@@ -1102,6 +1192,133 @@ export default function App() {
     localStorage.setItem('cp_lead_offers', JSON.stringify(updated));
   };
 
+  // ==================== ADMIN USER MANAGEMENT HANDLERS ====================
+  const syncActiveUserIfSelf = (targetEmail: string, newPlan?: 'free' | 'pro' | 'enterprise', newRole?: 'admin' | 'member') => {
+    if (!user || user.email.toLowerCase() !== targetEmail.toLowerCase()) return;
+    const limitsMap = {
+      free: { monthlyScans: 15, maxCrawlPages: 1, rateLimitPerMin: 20, maxApiKeys: 2, priceMonthly: 0 },
+      pro: { monthlyScans: 500, maxCrawlPages: 5, rateLimitPerMin: 120, maxApiKeys: 10, priceMonthly: 49 },
+      enterprise: { monthlyScans: 10000, maxCrawlPages: 15, rateLimitPerMin: 600, maxApiKeys: 50, priceMonthly: 199 },
+    };
+    const updatedSelf: UserProfile = {
+      ...user,
+      plan: newPlan || user.plan,
+      role: newRole || user.role,
+      limits: limitsMap[newPlan || user.plan],
+    };
+    setUser(updatedSelf);
+    localStorage.setItem('cp_hosted_user', JSON.stringify(updatedSelf));
+  };
+
+  const handleAdminCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserEmail.trim() || !newUserName.trim()) return;
+    setAdminMessage(null);
+
+    const payload = {
+      email: newUserEmail.trim().toLowerCase(),
+      name: newUserName.trim(),
+      plan: newUserPlan,
+      role: newUserRole,
+    };
+
+    try {
+      if (token) {
+        const res = await fetch('/api/admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json') && res.ok) {
+          const data = await res.json();
+          const updated = [data.user, ...managedUsers];
+          setManagedUsers(updated);
+          localStorage.setItem('cp_managed_users', JSON.stringify(updated));
+          setNewUserEmail('');
+          setNewUserName('');
+          setAdminMessage(`Provisioned user ${data.user.email} on ${data.user.plan.toUpperCase()} (${data.user.role}).`);
+          return;
+        }
+      }
+    } catch {
+      // Fall back to local admin persistence
+    }
+
+    const created: ManagedUser = {
+      id: `usr_${Date.now()}`,
+      email: payload.email,
+      name: payload.name,
+      role: payload.role,
+      status: 'active',
+      plan: payload.plan,
+      scans_used_this_month: 0,
+      created_at: new Date().toISOString(),
+    };
+    const updated = [created, ...managedUsers];
+    setManagedUsers(updated);
+    localStorage.setItem('cp_managed_users', JSON.stringify(updated));
+    setNewUserEmail('');
+    setNewUserName('');
+    setAdminMessage(`Provisioned user ${created.email} on ${created.plan.toUpperCase()} (${created.role}).`);
+  };
+
+  const handleAdminUpdateUser = async (
+    target: ManagedUser,
+    updates: {
+      plan?: 'free' | 'pro' | 'enterprise';
+      role?: 'admin' | 'member';
+      status?: 'active' | 'suspended';
+      resetQuota?: boolean;
+    }
+  ) => {
+    setAdminMessage(null);
+    try {
+      if (token) {
+        await fetch(`/api/admin/users/${target.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(updates),
+        });
+      }
+    } catch {
+      // ignore
+    }
+
+    const updated = managedUsers.map((u) => {
+      if (u.id !== target.id) return u;
+      return {
+        ...u,
+        plan: updates.plan || u.plan,
+        role: updates.role || u.role,
+        status: updates.status || u.status,
+        scans_used_this_month: updates.resetQuota ? 0 : u.scans_used_this_month,
+      };
+    });
+    setManagedUsers(updated);
+    localStorage.setItem('cp_managed_users', JSON.stringify(updated));
+    syncActiveUserIfSelf(target.email, updates.plan, updates.role);
+    setAdminMessage(`Updated ${target.email} successfully.`);
+  };
+
+  const handleAdminDeleteUser = async (target: ManagedUser) => {
+    setAdminMessage(null);
+    try {
+      if (token) {
+        await fetch(`/api/admin/users/${target.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+    } catch {
+      // ignore
+    }
+    const updated = managedUsers.filter((u) => u.id !== target.id);
+    setManagedUsers(updated);
+    localStorage.setItem('cp_managed_users', JSON.stringify(updated));
+    setAdminMessage(`Removed user ${target.email}.`);
+  };
+
   // ==================== AUTH SCREEN ====================
   if (!token || !user) {
     return (
@@ -1267,6 +1484,7 @@ export default function App() {
               { id: 'apikeys', label: 'Developer API Keys', icon: KeyRound },
               { id: 'apidocs', label: 'API Docs & Sandbox', icon: Terminal },
               { id: 'billing', label: 'Plans & Billing', icon: CreditCard },
+              { id: 'admin', label: 'Admin & Users', icon: ShieldCheck },
             ].map((item) => {
               const Icon = item.icon;
               const active = activeNav === item.id;
@@ -1293,9 +1511,16 @@ export default function App() {
           <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-3">
             <div className="flex items-center justify-between text-xs mb-1.5">
               <span className="text-slate-400">Monthly Quota</span>
-              <span className="uppercase font-bold text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                {user.plan}
-              </span>
+              <div className="flex items-center gap-1">
+                {user.role === 'admin' && (
+                  <span className="uppercase font-bold text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    ADMIN
+                  </span>
+                )}
+                <span className="uppercase font-bold text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  {user.plan === 'enterprise' ? 'SCALE' : user.plan}
+                </span>
+              </div>
             </div>
             <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
               <div
@@ -1385,6 +1610,9 @@ export default function App() {
                     </option>
                     <option value={5} disabled={user.limits.maxCrawlPages < 5}>
                       Crawl up to 5 Pages {user.limits.maxCrawlPages < 5 ? '(Pro)' : ''}
+                    </option>
+                    <option value={15} disabled={user.limits.maxCrawlPages < 15}>
+                      Deep Crawl up to 15 Pages {user.limits.maxCrawlPages < 15 ? '(Scale)' : ''}
                     </option>
                   </select>
 
@@ -2841,6 +3069,226 @@ ${JSON.stringify(
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ==================== TAB 7: SUPER ADMIN & USER MANAGEMENT ==================== */}
+        {activeNav === 'admin' && (
+          <div className="space-y-8">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <ShieldCheck className="w-6 h-6 text-amber-400" />
+                  <h1 className="text-2xl font-bold text-white">Super Admin & User Administration</h1>
+                </div>
+                <p className="text-sm text-slate-400 mt-1">
+                  Manage all registered platform users, assign subscription tiers (Starter Free, Growth Pro, Scale & Agency), grant Admin roles, or reset monthly scan quotas.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                  <span className="text-slate-400">Your Role: </span>
+                  <strong className="text-amber-300 uppercase">{user.role || 'admin'}</strong>
+                </div>
+                <div className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                  <span className="text-slate-400">Your Tier: </span>
+                  <strong className="text-indigo-300 uppercase">
+                    {user.plan === 'enterprise' ? 'Scale & Agency (10,000 scans/mo)' : user.plan}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            {adminMessage && (
+              <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-sm flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 shrink-0" />
+                {adminMessage}
+              </div>
+            )}
+
+            {/* Admin KPI Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5">
+                <div className="text-xs font-semibold uppercase text-slate-400">Total Users</div>
+                <div className="text-2xl font-extrabold text-white mt-1">{managedUsers.length}</div>
+                <div className="text-[11px] text-emerald-400 mt-1">
+                  {managedUsers.filter((u) => (u.status || 'active') === 'active').length} active accounts
+                </div>
+              </div>
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5">
+                <div className="text-xs font-semibold uppercase text-slate-400">Scale & Agency Tier</div>
+                <div className="text-2xl font-extrabold text-indigo-400 mt-1">
+                  {managedUsers.filter((u) => u.plan === 'enterprise').length}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-1">10,000 scans/mo & 15-page crawl</div>
+              </div>
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5">
+                <div className="text-xs font-semibold uppercase text-slate-400">Growth Pro Tier</div>
+                <div className="text-2xl font-extrabold text-violet-400 mt-1">
+                  {managedUsers.filter((u) => u.plan === 'pro').length}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-1">500 scans/mo & 5-page crawl</div>
+              </div>
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5">
+                <div className="text-xs font-semibold uppercase text-slate-400">Platform Admins</div>
+                <div className="text-2xl font-extrabold text-amber-400 mt-1">
+                  {managedUsers.filter((u) => u.role === 'admin').length}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-1">Full user & billing control</div>
+              </div>
+            </div>
+
+            {/* Provision / Invite New User Form */}
+            <form
+              onSubmit={handleAdminCreateUser}
+              className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 space-y-4"
+            >
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-indigo-400" />
+                <h2 className="text-base font-bold text-white">Provision / Invite New Workspace User</h2>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <input
+                  type="text"
+                  required
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  placeholder="Full Name / Team"
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                />
+                <input
+                  type="email"
+                  required
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
+                  placeholder="user@company.com"
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                />
+                <select
+                  value={newUserPlan}
+                  onChange={(e) => setNewUserPlan(e.target.value as 'free' | 'pro' | 'enterprise')}
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                >
+                  <option value="free">Starter Free ($0)</option>
+                  <option value="pro">Growth Pro ($49/mo)</option>
+                  <option value="enterprise">Scale & Agency ($199/mo)</option>
+                </select>
+                <select
+                  value={newUserRole}
+                  onChange={(e) => setNewUserRole(e.target.value as 'admin' | 'member')}
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                >
+                  <option value="member">Role: Workspace Member</option>
+                  <option value="admin">Role: Super Admin</option>
+                </select>
+                <button
+                  type="submit"
+                  className="py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add User
+                </button>
+              </div>
+            </form>
+
+            {/* User Directory & Inline Tier / Role Controls */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-slate-800 font-semibold text-sm text-white flex items-center justify-between">
+                <span>Platform User Directory ({managedUsers.length})</span>
+                <span className="text-xs text-slate-400">Change any user's plan or role inline</span>
+              </div>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 text-xs text-slate-400 bg-slate-950/60">
+                    <th className="py-3.5 px-4">User & Email</th>
+                    <th className="py-3.5 px-4">Role</th>
+                    <th className="py-3.5 px-4">Subscription Tier</th>
+                    <th className="py-3.5 px-4">Monthly Usage</th>
+                    <th className="py-3.5 px-4">Status</th>
+                    <th className="py-3.5 px-4 text-right">Admin Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-xs">
+                  {managedUsers.map((u) => {
+                    const maxQuota = u.plan === 'enterprise' ? 10000 : u.plan === 'pro' ? 500 : 15;
+                    return (
+                      <tr key={u.id} className="hover:bg-slate-800/40">
+                        <td className="py-3.5 px-4">
+                          <div className="font-semibold text-white">{u.name}</div>
+                          <div className="text-indigo-400 font-mono text-[11px]">{u.email}</div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <select
+                            value={u.role || 'member'}
+                            onChange={(e) =>
+                              handleAdminUpdateUser(u, { role: e.target.value as 'admin' | 'member' })
+                            }
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white"
+                          >
+                            <option value="admin">Super Admin</option>
+                            <option value="member">Member</option>
+                          </select>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <select
+                            value={u.plan}
+                            onChange={(e) =>
+                              handleAdminUpdateUser(u, {
+                                plan: e.target.value as 'free' | 'pro' | 'enterprise',
+                              })
+                            }
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-semibold text-indigo-300"
+                          >
+                            <option value="free">Starter Free (15/mo)</option>
+                            <option value="pro">Growth Pro (500/mo)</option>
+                            <option value="enterprise">Scale & Agency (10,000/mo)</option>
+                          </select>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="font-semibold text-white">{u.scans_used_this_month}</span>
+                          <span className="text-slate-500"> / {maxQuota}</span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleAdminUpdateUser(u, {
+                                status: (u.status || 'active') === 'active' ? 'suspended' : 'active',
+                              })
+                            }
+                            className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase cursor-pointer ${
+                              (u.status || 'active') === 'active'
+                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                            }`}
+                          >
+                            {u.status || 'active'}
+                          </button>
+                        </td>
+                        <td className="py-3.5 px-4 text-right space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => handleAdminUpdateUser(u, { resetQuota: true })}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] transition cursor-pointer"
+                            title="Reset Monthly Scan Quota to 0"
+                          >
+                            Reset Quota
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAdminDeleteUser(u)}
+                            className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-500/15 transition cursor-pointer align-middle"
+                            title="Delete User"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         )}

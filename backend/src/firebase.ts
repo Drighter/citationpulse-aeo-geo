@@ -43,12 +43,20 @@ export interface UserDoc {
   id: string;
   email: string;
   name: string;
+  role?: 'admin' | 'member';
+  status?: 'active' | 'suspended';
   password_hash?: string; // Used only when Firebase Auth Emulator / Local fallback is active
   plan: 'free' | 'pro' | 'enterprise';
   stripe_customer_id?: string | null;
   stripe_subscription_id?: string | null;
   scans_used_this_month: number;
   created_at: string;
+}
+
+export const SUPER_ADMIN_EMAILS = ['danrighter@gmail.com', 'demo@citationpulse.io', 'admin@citationpulse.io'];
+
+export function isSuperAdminEmail(email: string): boolean {
+  return SUPER_ADMIN_EMAILS.includes(email.toLowerCase().trim());
 }
 
 export interface ApiKeyDoc {
@@ -216,10 +224,32 @@ function loadLocalStore(): LocalFirestoreDump {
       [demoUserId]: {
         id: demoUserId,
         email: 'demo@citationpulse.io',
-        name: 'Alex Rivera (Pro Workspace)',
+        name: 'Dan Righter (Owner & Super Admin)',
+        role: 'admin',
+        status: 'active',
         password_hash: bcrypt.hashSync('demo1234', 10),
-        plan: 'pro',
+        plan: 'enterprise',
         scans_used_this_month: 2,
+        created_at: now,
+      },
+      usr_sample_pro: {
+        id: 'usr_sample_pro',
+        email: 'sarah.chen@vercel.com',
+        name: 'Sarah Chen (Growth Lead)',
+        role: 'member',
+        status: 'active',
+        plan: 'pro',
+        scans_used_this_month: 42,
+        created_at: now,
+      },
+      usr_sample_free: {
+        id: 'usr_sample_free',
+        email: 'mark@indiehacker.io',
+        name: 'Mark Davis',
+        role: 'member',
+        status: 'active',
+        plan: 'free',
+        scans_used_this_month: 9,
         created_at: now,
       },
     },
@@ -565,5 +595,62 @@ export const firestoreRepo = {
     }
     persistLocalStore();
     return true;
+  },
+
+  async listAllUsers(): Promise<Omit<UserDoc, 'password_hash'>[]> {
+    if (firestoreInstance) {
+      try {
+        const snap = await firestoreInstance.collection('users').orderBy('created_at', 'desc').get();
+        if (!snap.empty) {
+          return snap.docs.map((d: QueryDocumentSnapshot) => {
+            const { password_hash: _, ...rest } = d.data() as UserDoc;
+            return rest;
+          });
+        }
+      } catch {
+        firestoreInstance = null;
+      }
+    }
+    return Object.values(localData.users)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map(({ password_hash: _, ...rest }) => rest);
+  },
+
+  async adminUpdateUser(
+    targetUserId: string,
+    updates: {
+      plan?: 'free' | 'pro' | 'enterprise';
+      role?: 'admin' | 'member';
+      status?: 'active' | 'suspended';
+      resetQuota?: boolean;
+      name?: string;
+    }
+  ): Promise<UserDoc | null> {
+    const existing = await this.getUserById(targetUserId);
+    if (!existing) return null;
+
+    if (updates.plan) existing.plan = updates.plan;
+    if (updates.role) existing.role = updates.role;
+    if (updates.status) existing.status = updates.status;
+    if (updates.name) existing.name = updates.name;
+    if (updates.resetQuota) existing.scans_used_this_month = 0;
+
+    return this.upsertUser(existing);
+  },
+
+  async adminDeleteUser(targetUserId: string): Promise<boolean> {
+    if (firestoreInstance) {
+      try {
+        await firestoreInstance.collection('users').doc(targetUserId).delete();
+      } catch {
+        firestoreInstance = null;
+      }
+    }
+    if (localData.users[targetUserId]) {
+      delete localData.users[targetUserId];
+      persistLocalStore();
+      return true;
+    }
+    return false;
   },
 };

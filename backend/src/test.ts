@@ -196,6 +196,49 @@ async function runTests() {
     });
     assert.strictEqual(v1OffersRes.status, 200);
 
+    console.log('7. Testing Super Admin User Management Endpoints...');
+    const adminListRes = await fetch(`${apiBase}/api/admin/users`, {
+      headers: { Authorization: `Bearer ${loginData.token}` },
+    });
+    assert.strictEqual(adminListRes.status, 200);
+    const adminUsers = (await adminListRes.json()) as Array<{ id: string; email: string; plan: string; role: string }>;
+    assert.ok(adminUsers.length >= 1, 'Expected at least 1 user in admin directory');
+
+    const createUserRes = await fetch(`${apiBase}/api/admin/users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${loginData.token}`,
+      },
+      body: JSON.stringify({
+        email: 'newclient@agency.io',
+        name: 'New Agency Client',
+        plan: 'pro',
+        role: 'member',
+      }),
+    });
+    assert.strictEqual(createUserRes.status, 201);
+    const createdUser = (await createUserRes.json()) as { id: string; plan: string };
+
+    const patchUserRes = await fetch(`${apiBase}/api/admin/users/${createdUser.id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${loginData.token}`,
+      },
+      body: JSON.stringify({ plan: 'enterprise', role: 'admin' }),
+    });
+    assert.strictEqual(patchUserRes.status, 200);
+    const patchedUser = (await patchUserRes.json()) as { plan: string; role: string };
+    assert.strictEqual(patchedUser.plan, 'enterprise');
+    assert.strictEqual(patchedUser.role, 'admin');
+
+    const deleteUserRes = await fetch(`${apiBase}/api/admin/users/${createdUser.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${loginData.token}` },
+    });
+    assert.strictEqual(deleteUserRes.status, 200);
+
     console.log('\n✅ ALL E2E TESTS PASSED!');
   } finally {
     await mockSite.close();

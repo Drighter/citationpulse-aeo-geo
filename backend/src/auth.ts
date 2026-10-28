@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
-import { firestoreRepo, getFirebaseAuth, UserDoc } from './firebase.js';
+import { firestoreRepo, getFirebaseAuth, isSuperAdminEmail, UserDoc } from './firebase.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-aeo-geo-jwt-key-change-in-production-2026';
 
@@ -9,6 +9,8 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
+  role: 'admin' | 'member';
+  status: 'active' | 'suspended';
   plan: 'free' | 'pro' | 'enterprise';
   scans_used_this_month: number;
 }
@@ -79,21 +81,31 @@ export async function requireFirebaseAuth(req: AuthenticatedRequest, res: Respon
     try {
       const decoded = await fbAuth.verifyIdToken(token);
       let userDoc = await firestoreRepo.getUserById(decoded.uid);
+      const email = decoded.email || `${decoded.uid}@firebase.user`;
+      const isAdmin = isSuperAdminEmail(email);
       if (!userDoc) {
         const newUser: UserDoc = {
           id: decoded.uid,
-          email: decoded.email || `${decoded.uid}@firebase.user`,
+          email,
           name: decoded.name || decoded.email?.split('@')[0] || 'Firebase User',
-          plan: 'free',
+          role: isAdmin ? 'admin' : 'member',
+          status: 'active',
+          plan: isAdmin ? 'enterprise' : 'free',
           scans_used_this_month: 0,
           created_at: new Date().toISOString(),
         };
         userDoc = await firestoreRepo.upsertUser(newUser);
+      } else if (isAdmin && (userDoc.role !== 'admin' || userDoc.plan !== 'enterprise')) {
+        userDoc.role = 'admin';
+        userDoc.plan = 'enterprise';
+        userDoc = await firestoreRepo.upsertUser(userDoc);
       }
       req.user = {
         id: userDoc.id,
         email: userDoc.email,
         name: userDoc.name,
+        role: userDoc.role || (isAdmin ? 'admin' : 'member'),
+        status: userDoc.status || 'active',
         plan: userDoc.plan,
         scans_used_this_month: userDoc.scans_used_this_month,
       };
@@ -114,11 +126,14 @@ export async function requireFirebaseAuth(req: AuthenticatedRequest, res: Respon
       return;
     }
 
+    const isAdmin = isSuperAdminEmail(userDoc.email);
     req.user = {
       id: userDoc.id,
       email: userDoc.email,
       name: userDoc.name,
-      plan: userDoc.plan,
+      role: userDoc.role || (isAdmin ? 'admin' : 'member'),
+      status: userDoc.status || 'active',
+      plan: isAdmin && userDoc.plan === 'pro' ? 'enterprise' : userDoc.plan,
       scans_used_this_month: userDoc.scans_used_this_month,
     };
     next();
@@ -189,6 +204,8 @@ export function requireDeveloperApiKey(requiredScope?: string) {
       id: userDoc.id,
       email: userDoc.email,
       name: userDoc.name,
+      role: userDoc.role || (isSuperAdminEmail(userDoc.email) ? 'admin' : 'member'),
+      status: userDoc.status || 'active',
       plan: userDoc.plan,
       scans_used_this_month: userDoc.scans_used_this_month,
     };

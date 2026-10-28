@@ -10,9 +10,22 @@ export interface UserProfile {
   id: string;
   email: string;
   name: string;
+  role?: 'admin' | 'member';
+  status?: 'active' | 'suspended';
   plan: 'free' | 'pro' | 'enterprise';
   scansUsedThisMonth: number;
   limits: PlanLimits;
+}
+
+export interface ManagedUser {
+  id: string;
+  email: string;
+  name: string;
+  role?: 'admin' | 'member';
+  status?: 'active' | 'suspended';
+  plan: 'free' | 'pro' | 'enterprise';
+  scans_used_this_month: number;
+  created_at: string;
 }
 
 export interface CheckItem {

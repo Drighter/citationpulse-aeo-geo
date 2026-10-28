@@ -10,6 +10,7 @@ import {
   firestoreRepo,
   getFirebaseAuth,
   isCloudFirestoreActive,
+  isSuperAdminEmail,
   PLAN_LIMITS,
 } from './firebase.js';
 import {
@@ -163,13 +164,18 @@ app.post('/api/auth/register', async (req, res) => {
 
   const passwordHash = bcrypt.hashSync(password, 10);
   const now = new Date().toISOString();
+  const isOwner = isSuperAdminEmail(normalizedEmail);
+  const initialPlan = isOwner ? 'enterprise' : 'free';
+  const initialRole = isOwner ? 'admin' : 'member';
 
   await firestoreRepo.upsertUser({
     id: uid,
     email: normalizedEmail,
     name: name.trim(),
+    role: initialRole,
+    status: 'active',
     password_hash: passwordHash,
-    plan: 'free',
+    plan: initialPlan,
     scans_used_this_month: 0,
     created_at: now,
   });
@@ -181,9 +187,11 @@ app.post('/api/auth/register', async (req, res) => {
       id: uid,
       email: normalizedEmail,
       name: name.trim(),
-      plan: 'free',
+      role: initialRole,
+      status: 'active',
+      plan: initialPlan,
       scansUsedThisMonth: 0,
-      limits: PLAN_LIMITS.free,
+      limits: PLAN_LIMITS[initialPlan],
     },
   });
 });
@@ -208,6 +216,10 @@ app.post('/api/auth/login', async (req, res) => {
     return;
   }
 
+  const isOwner = isSuperAdminEmail(user.email);
+  const effectivePlan = isOwner ? 'enterprise' : user.plan;
+  const effectiveRole = user.role || (isOwner ? 'admin' : 'member');
+
   const token = signSessionToken(user.id);
   res.json({
     token,
@@ -215,9 +227,11 @@ app.post('/api/auth/login', async (req, res) => {
       id: user.id,
       email: user.email,
       name: user.name,
-      plan: user.plan,
+      role: effectiveRole,
+      status: user.status || 'active',
+      plan: effectivePlan,
       scansUsedThisMonth: user.scans_used_this_month,
-      limits: PLAN_LIMITS[user.plan] || PLAN_LIMITS.free,
+      limits: PLAN_LIMITS[effectivePlan] || PLAN_LIMITS.free,
     },
   });
 });
@@ -230,6 +244,8 @@ app.post('/api/auth/firebase-sync', requireFirebaseAuth, async (req: Authenticat
       id: u.id,
       email: u.email,
       name: u.name,
+      role: u.role,
+      status: u.status,
       plan: u.plan,
       scansUsedThisMonth: u.scans_used_this_month,
       limits: PLAN_LIMITS[u.plan] || PLAN_LIMITS.free,
@@ -244,6 +260,8 @@ app.get('/api/auth/me', requireFirebaseAuth, (req: AuthenticatedRequest, res: Re
       id: u.id,
       email: u.email,
       name: u.name,
+      role: u.role,
+      status: u.status,
       plan: u.plan,
       scansUsedThisMonth: u.scans_used_this_month,
       limits: PLAN_LIMITS[u.plan] || PLAN_LIMITS.free,
@@ -943,6 +961,87 @@ app.get('/api/v1/muse/offers', requireDeveloperApiKey('scan:read'), async (req: 
     activeOffersCount: activeOffers.length,
     data: activeOffers,
   });
+});
+
+// ==================== 7. SUPER ADMIN USER MANAGEMENT PORTAL ====================
+function requireAdminRole(req: AuthenticatedRequest, res: Response, next: express.NextFunction) {
+  if (!req.user || (req.user.role !== 'admin' && !isSuperAdminEmail(req.user.email))) {
+    res.status(403).json({ error: 'forbidden', message: 'Super Admin privileges required' });
+    return;
+  }
+  next();
+}
+
+app.get('/api/admin/users', requireFirebaseAuth, requireAdminRole, async (_req: AuthenticatedRequest, res: Response) => {
+  const users = await firestoreRepo.listAllUsers();
+  res.json({ users });
+});
+
+const adminCreateUserSchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(2).max(80),
+  plan: z.enum(['free', 'pro', 'enterprise']),
+  role: z.enum(['admin', 'member']),
+});
+
+app.post('/api/admin/users', requireFirebaseAuth, requireAdminRole, async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = adminCreateUserSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid user parameters', details: parsed.error.flatten() });
+    return;
+  }
+  const { email, name, plan, role } = parsed.data;
+  const normalized = email.toLowerCase().trim();
+  const existing = await firestoreRepo.getUserByEmail(normalized);
+  if (existing) {
+    res.status(409).json({ error: 'A user with this email already exists' });
+    return;
+  }
+  const newUser = await firestoreRepo.upsertUser({
+    id: `usr_${crypto.randomBytes(6).toString('hex')}`,
+    email: normalized,
+    name: name.trim(),
+    role,
+    status: 'active',
+    password_hash: bcrypt.hashSync('welcome123', 10),
+    plan,
+    scans_used_this_month: 0,
+    created_at: new Date().toISOString(),
+  });
+  const { password_hash: _, ...cleanUser } = newUser;
+  res.status(201).json({ user: cleanUser });
+});
+
+const adminUpdateUserSchema = z.object({
+  plan: z.enum(['free', 'pro', 'enterprise']).optional(),
+  role: z.enum(['admin', 'member']).optional(),
+  status: z.enum(['active', 'suspended']).optional(),
+  resetQuota: z.boolean().optional(),
+  name: z.string().min(2).max(80).optional(),
+});
+
+app.patch('/api/admin/users/:id', requireFirebaseAuth, requireAdminRole, async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = adminUpdateUserSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid update payload' });
+    return;
+  }
+  const updated = await firestoreRepo.adminUpdateUser(String(req.params.id), parsed.data);
+  if (!updated) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  const { password_hash: _, ...cleanUser } = updated;
+  res.json({ user: cleanUser });
+});
+
+app.delete('/api/admin/users/:id', requireFirebaseAuth, requireAdminRole, async (req: AuthenticatedRequest, res: Response) => {
+  const deleted = await firestoreRepo.adminDeleteUser(String(req.params.id));
+  if (!deleted) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  res.json({ success: true });
 });
 
 const PORT = Number(process.env.PORT) || 4000;
