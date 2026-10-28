@@ -10,7 +10,19 @@ import {
   signOut,
   connectAuthEmulator,
 } from 'firebase/auth';
-import { getFirestore, Firestore, connectFirestoreEmulator } from 'firebase/firestore';
+import {
+  getFirestore,
+  Firestore,
+  connectFirestoreEmulator,
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+} from 'firebase/firestore';
+import type { ScanReport, ScanSummary } from './types';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -81,6 +93,76 @@ export async function firebaseGoogleSignIn(): Promise<GoogleAuthResult> {
 export async function firebaseLogout(): Promise<void> {
   if (firebaseAuth) {
     await signOut(firebaseAuth);
+  }
+}
+
+export async function saveScanToCloudFirestore(userId: string, report: ScanReport, source = 'dashboard'): Promise<void> {
+  if (!firestoreDb) return;
+  try {
+    await setDoc(doc(firestoreDb, 'scans', report.id), {
+      id: report.id,
+      user_id: userId,
+      url: report.url,
+      domain: report.domain,
+      crawl_depth: report.crawlPagesCount,
+      pages_scanned: report.crawlPagesCount,
+      overall_score: report.scores.overall,
+      seo_score: report.scores.seo,
+      aeo_score: report.scores.aeo,
+      geo_score: report.scores.geo,
+      status: 'completed',
+      source,
+      result_json: JSON.stringify(report),
+      created_at: report.scannedAt,
+    });
+  } catch {
+    // Gracefully ignore if Cloud Firestore API is not yet enabled on the project
+  }
+}
+
+export async function loadScansFromCloudFirestore(userId: string): Promise<ScanSummary[] | null> {
+  if (!firestoreDb) return null;
+  try {
+    const q = query(collection(firestoreDb, 'scans'), where('user_id', '==', userId));
+    const snap = await getDocs(q);
+    if (snap.empty) return [];
+    const items: ScanSummary[] = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      items.push({
+        id: data.id,
+        url: data.url,
+        domain: data.domain,
+        crawl_depth: data.crawl_depth || 1,
+        pages_scanned: data.pages_scanned || 1,
+        overall_score: data.overall_score,
+        seo_score: data.seo_score,
+        aeo_score: data.aeo_score,
+        geo_score: data.geo_score,
+        status: data.status || 'completed',
+        source: data.source || 'dashboard',
+        created_at: data.created_at,
+      });
+    });
+    return items.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  } catch {
+    return null;
+  }
+}
+
+export async function loadSingleScanFromCloudFirestore(scanId: string): Promise<ScanReport | null> {
+  if (!firestoreDb) return null;
+  try {
+    const snap = await getDoc(doc(firestoreDb, 'scans', scanId));
+    if (snap.exists()) {
+      const data = snap.data();
+      if (data.result_json) {
+        return JSON.parse(data.result_json) as ScanReport;
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 

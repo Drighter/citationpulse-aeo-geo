@@ -9,8 +9,7 @@ service cloud.firestore {
 
     // Scans belong to authenticated users
     match /scans/{scanId} {
-      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
-      allow write: if false; // Created via Backend Scanner API
+      allow read, create, update, delete: if request.auth != null && (resource == null || resource.data.user_id == request.auth.uid);
     }
 
     // API Keys belong to authenticated users
