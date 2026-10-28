@@ -57,6 +57,8 @@ jobs:
     needs: build-and-test
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_CITATIONPULSE_AEO_GEO }}
 
     steps:
       - name: Checkout Repository
@@ -69,7 +71,7 @@ jobs:
           path: frontend/dist
 
       - name: Deploy to Firebase Hosting (Live Channel)
-        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_CITATIONPULSE_AEO_GEO != '' }}
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
