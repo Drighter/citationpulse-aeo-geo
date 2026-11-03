@@ -8,8 +8,10 @@ import {
   Code2,
   Copy,
   CreditCard,
+  Download,
   ExternalLink,
   FileCode2,
+  FileText,
   Globe,
   History,
   KeyRound,
@@ -17,13 +19,16 @@ import {
   Loader2,
   Lock,
   LogOut,
+  Package,
   Plus,
   RefreshCw,
   Search,
+  Share2,
   ShieldCheck,
   Sparkles,
   Terminal,
   Trash2,
+  Upload,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -38,6 +43,13 @@ import type {
   ScanSummary,
   UserProfile,
 } from './types';
+import {
+  downloadAuditPackageZip,
+  downloadJsonReport,
+  downloadMarkdownSummary,
+  downloadStandaloneHtmlReport,
+  generateMarkdownReport,
+} from './exportPackage';
 import {
   firebaseEmailSignIn,
   firebaseEmailSignUp,
@@ -271,6 +283,13 @@ export default function App() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [activeReport, setActiveReport] = useState<ScanReport | null>(null);
   const [reportSubTab, setReportSubTab] = useState<'all' | 'seo' | 'aeo' | 'geo' | 'fixes' | 'pages'>('all');
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportToast, setExportToast] = useState<string | null>(null);
+
+  const triggerExportToast = (msg: string) => {
+    setExportToast(msg);
+    setTimeout(() => setExportToast(null), 4500);
+  };
 
   // History state (persisted across reloads in localStorage + Cloud Firestore / Backend API)
   const [scanHistory, setScanHistory] = useState<ScanSummary[]>(() => {
@@ -810,21 +829,20 @@ export default function App() {
     }
   };
 
-  const handleLoadPastScan = async (scanId: string) => {
-    if (!token) return;
-    try {
-      const res = await fetch(`/api/scans/${scanId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json') && res.ok) {
-        const data = await res.json();
-        setActiveReport(data);
-        setActiveNav('scanner');
-        return;
+  const resolveScanReportById = async (scanId: string): Promise<ScanReport | null> => {
+    if (token) {
+      try {
+        const res = await fetch(`/api/scans/${scanId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json') && res.ok) {
+          const data = await res.json();
+          return data as ScanReport;
+        }
+      } catch {
+        // Fall back to local cache or Cloud Firestore
       }
-    } catch {
-      // Fall back to local cache or Cloud Firestore
     }
 
     try {
@@ -832,9 +850,7 @@ export default function App() {
       if (reportsRaw) {
         const reportsMap: Record<string, ScanReport> = JSON.parse(reportsRaw);
         if (reportsMap[scanId]) {
-          setActiveReport(reportsMap[scanId]);
-          setActiveNav('scanner');
-          return;
+          return reportsMap[scanId];
         }
       }
     } catch {
@@ -843,9 +859,58 @@ export default function App() {
 
     const cloudReport = await loadSingleScanFromCloudFirestore(scanId);
     if (cloudReport) {
-      setActiveReport(cloudReport);
+      return cloudReport;
+    }
+    return null;
+  };
+
+  const handleLoadPastScan = async (scanId: string) => {
+    const found = await resolveScanReportById(scanId);
+    if (found) {
+      setActiveReport(found);
       setActiveNav('scanner');
     }
+  };
+
+  const handleExportPastScan = async (scanId: string, format: 'zip' | 'html') => {
+    const found = await resolveScanReportById(scanId);
+    if (!found) {
+      triggerExportToast('Unable to load full scan details for export.');
+      return;
+    }
+    if (format === 'zip') {
+      const filename = downloadAuditPackageZip(found);
+      triggerExportToast(`Downloaded shareable package: ${filename}`);
+    } else {
+      const filename = downloadStandaloneHtmlReport(found);
+      triggerExportToast(`Downloaded interactive HTML report: ${filename}`);
+    }
+  };
+
+  const handleImportPackageJson = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        const reportObj: ScanReport = parsed.report ? parsed.report : parsed;
+        if (!reportObj || !reportObj.scores || !reportObj.url) {
+          alert('Invalid CitationPulse scan report JSON file.');
+          return;
+        }
+        if (!reportObj.id) reportObj.id = `scan_imported_${Date.now()}`;
+        setActiveReport(reportObj);
+        persistScanReportLocally(reportObj, 'imported');
+        if (user) saveScanToCloudFirestore(user.id, reportObj, 'imported');
+        setActiveNav('scanner');
+        triggerExportToast(`Imported shared audit report for ${reportObj.domain || reportObj.url}`);
+      } catch {
+        alert('Could not parse the selected JSON report file.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const handleCreateApiKey = async (e: React.FormEvent) => {
@@ -1566,7 +1631,7 @@ export default function App() {
                   Audit any URL for Google Search (SEO), Answer Engines (AEO), and Generative AI Citation readiness (ChatGPT, Perplexity, Claude, Gemini).
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {['https://stripe.com', 'https://vercel.com', 'https://example.com'].map((preset) => (
                   <button
                     key={preset}
@@ -1577,8 +1642,34 @@ export default function App() {
                     {new URL(preset).hostname}
                   </button>
                 ))}
+                <label className="text-xs px-3 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 transition cursor-pointer flex items-center gap-1.5 font-medium">
+                  <Upload className="w-3.5 h-3.5" />
+                  Import Shared Report (.json)
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={handleImportPackageJson}
+                    className="hidden"
+                  />
+                </label>
               </div>
             </div>
+
+            {exportToast && (
+              <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-medium flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{exportToast}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExportToast(null)}
+                  className="text-emerald-200 hover:text-white text-xs cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
 
             {/* Scanner Bar */}
             <form
@@ -1669,38 +1760,185 @@ export default function App() {
             {/* Report Results */}
             {activeReport && (
               <div className="space-y-6">
-                {/* Summary Header */}
-                <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-lg font-bold text-white">{activeReport.metadata.title}</span>
-                      <a
-                        href={activeReport.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-indigo-400 hover:underline flex items-center gap-1"
+                {/* Summary Header + Export & Share Package Bar */}
+                <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-lg font-bold text-white">{activeReport.metadata.title}</span>
+                        <a
+                          href={activeReport.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-indigo-400 hover:underline flex items-center gap-1"
+                        >
+                          {activeReport.url} <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1 max-w-3xl">
+                        {activeReport.metadata.description || 'No meta description detected on this page.'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-slate-400">
+                      <div>
+                        <span className="text-slate-500">Pages Crawled:</span>{' '}
+                        <strong className="text-white">{activeReport.crawlPagesCount}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Words:</span>{' '}
+                        <strong className="text-white">{activeReport.metadata.wordCount}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Scan Time:</span>{' '}
+                        <strong className="text-white">{activeReport.durationMs}ms</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Share & Export Package Action Toolbar */}
+                  <div className="pt-3.5 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-xs text-slate-300">
+                      <Package className="w-4 h-4 text-indigo-400" />
+                      <span className="font-semibold text-white">Shareable Audit Package:</span>
+                      <span className="text-slate-400 hidden sm:inline">
+                        Export standalone visual HTML report, Markdown brief, JSON dataset & ready-to-deploy fix files.
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const name = downloadAuditPackageZip(activeReport);
+                          triggerExportToast(`Downloaded complete shareable ZIP package: ${name}`);
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/20 transition cursor-pointer"
                       >
-                        {activeReport.url} <ExternalLink className="w-3 h-3" />
-                      </a>
+                        <Download className="w-3.5 h-3.5" />
+                        Export Full Package (.zip)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const name = downloadStandaloneHtmlReport(activeReport);
+                          triggerExportToast(`Downloaded standalone interactive HTML report: ${name}`);
+                        }}
+                        className="px-3 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <FileCode2 className="w-3.5 h-3.5" />
+                        Interactive HTML / PDF
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(generateMarkdownReport(activeReport));
+                          triggerExportToast('Copied Executive Markdown Summary to clipboard for Slack / Notion / Email!');
+                        }}
+                        className="px-3 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        Copy Summary
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowExportModal(!showExportModal)}
+                        className="px-3 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                        {showExportModal ? 'Hide Package Details' : 'Package Contents & Formats'}
+                      </button>
                     </div>
-                    <p className="text-xs text-slate-400 mt-1 max-w-3xl">
-                      {activeReport.metadata.description || 'No meta description detected on this page.'}
-                    </p>
                   </div>
-                  <div className="flex items-center gap-4 text-xs text-slate-400">
-                    <div>
-                      <span className="text-slate-500">Pages Crawled:</span>{' '}
-                      <strong className="text-white">{activeReport.crawlPagesCount}</strong>
+
+                  {/* Expandable Package Contents & Multi-Format Export Drawer */}
+                  {showExportModal && (
+                    <div className="p-4 rounded-xl bg-slate-950 border border-indigo-500/30 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-300">
+                            What’s Inside the Shareable Audit Package (.zip)
+                          </h3>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            Send the `.zip` or `index.html` to clients, executives, or developers — works 100% offline with zero setup.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const name = downloadMarkdownSummary(activeReport);
+                              triggerExportToast(`Downloaded Markdown Executive Brief: ${name}`);
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-800 text-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                            Download .md
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const name = downloadJsonReport(activeReport);
+                              triggerExportToast(`Downloaded portable JSON report: ${name}`);
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-800 text-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Code2 className="w-3.5 h-3.5 text-emerald-400" />
+                            Download .json
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
+                        {[
+                          {
+                            file: 'index.html',
+                            desc: 'Self-contained visual report with Print-to-PDF & copy buttons',
+                          },
+                          {
+                            file: 'AUDIT-REPORT.md',
+                            desc: 'Executive summary & prioritized table for Notion, GitHub & Slack',
+                          },
+                          {
+                            file: 'scan-report.json',
+                            desc: 'Portable dataset — can be re-imported into any CitationPulse workspace',
+                          },
+                          {
+                            file: 'fixes/schema-jsonld.html',
+                            desc: 'Ready-to-paste Organization, WebSite & FAQPage JSON-LD script',
+                          },
+                          {
+                            file: 'fixes/llms.txt',
+                            desc: 'Machine context grounding file for ChatGPT, Claude & Perplexity',
+                          },
+                          {
+                            file: 'fixes/robots.txt',
+                            desc: 'AI crawler rules permitting GPTBot, ClaudeBot & PerplexityBot',
+                          },
+                          {
+                            file: 'fixes/meta-tags.html',
+                            desc: 'Optimized Title, Meta Description, Canonical & OpenGraph tags',
+                          },
+                          {
+                            file: 'README.txt',
+                            desc: 'Step-by-step instructions for recipients & engineering teams',
+                          },
+                        ].map((item) => (
+                          <div
+                            key={item.file}
+                            className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/90"
+                          >
+                            <div className="font-mono font-semibold text-indigo-300 text-[11px]">
+                              {item.file}
+                            </div>
+                            <div className="text-[11px] text-slate-400 mt-0.5">{item.desc}</div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-slate-500">Words:</span>{' '}
-                      <strong className="text-white">{activeReport.metadata.wordCount}</strong>
-                    </div>
-                    <div>
-                      <span className="text-slate-500">Scan Time:</span>{' '}
-                      <strong className="text-white">{activeReport.durationMs}ms</strong>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* 4 Score Gauges */}
@@ -2041,12 +2279,30 @@ export default function App() {
                           {new Date(s.created_at).toLocaleString()}
                         </td>
                         <td className="py-3.5 px-4 text-right">
-                          <button
-                            onClick={() => handleLoadPastScan(s.id)}
-                            className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-medium transition cursor-pointer"
-                          >
-                            View Report
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleLoadPastScan(s.id)}
+                              className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-medium transition cursor-pointer"
+                            >
+                              View Report
+                            </button>
+                            <button
+                              onClick={() => handleExportPastScan(s.id, 'zip')}
+                              title="Download Shareable Audit Package (.zip)"
+                              className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 font-medium transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Package className="w-3.5 h-3.5" />
+                              Export .zip
+                            </button>
+                            <button
+                              onClick={() => handleExportPastScan(s.id, 'html')}
+                              title="Download Standalone Interactive HTML Report"
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              HTML
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

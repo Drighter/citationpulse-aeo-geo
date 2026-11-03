@@ -112,6 +112,7 @@ async function runTests() {
     });
     assert.strictEqual(scanRes.status, 201);
     const scanReport = (await scanRes.json()) as {
+      id: string;
       scores: { overall: number; seo: number; aeo: number; geo: number };
       generatedFixes: { jsonLdSchema: string; llmsTxt: string; robotsTxt: string };
     };
@@ -119,6 +120,19 @@ async function runTests() {
     assert.ok(scanReport.scores.overall >= 75, 'Expected high score on well-optimized mock page');
     assert.ok(scanReport.generatedFixes.jsonLdSchema.includes('application/ld+json'));
     assert.ok(scanReport.generatedFixes.llmsTxt.includes('Key Pages for AI Grounding'));
+
+    const exportRes = await fetch(`${apiBase}/api/scans/${scanReport.id}/export`, {
+      headers: { Authorization: `Bearer ${loginData.token}` },
+    });
+    assert.strictEqual(exportRes.status, 200);
+    const exportPkg = (await exportRes.json()) as {
+      object: string;
+      packageFilename: string;
+      files: Record<string, string>;
+    };
+    assert.strictEqual(exportPkg.object, 'scan_export_package');
+    assert.ok(exportPkg.packageFilename.endsWith('.zip'));
+    assert.ok(exportPkg.files['fixes/llms.txt']);
 
     console.log('4. Testing Developer API Key Generation & Public /api/v1/scan Endpoint...');
     const createKeyRes = await fetch(`${apiBase}/api/keys`, {

@@ -367,6 +367,40 @@ app.get('/api/scans/:id', requireFirebaseAuth, async (req: AuthenticatedRequest,
   });
 });
 
+app.get('/api/scans/:id/export', requireFirebaseAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const row = await firestoreRepo.getScanById(String(req.params.id), req.user!.id);
+
+  if (!row) {
+    res.status(404).json({ error: 'Scan report not found in Firestore' });
+    return;
+  }
+
+  const parsedResult = JSON.parse(row.result_json);
+  const report = {
+    id: row.id,
+    source: row.source,
+    createdAt: row.created_at,
+    ...parsedResult,
+  };
+
+  res.json({
+    object: 'scan_export_package',
+    id: row.id,
+    domain: row.domain,
+    url: row.url,
+    exportedAt: new Date().toISOString(),
+    packageFilename: `citationpulse-package-${row.domain}-${row.created_at.slice(0, 10)}.zip`,
+    report,
+    files: {
+      'scan-report.json': JSON.stringify(report, null, 2),
+      'fixes/schema-jsonld.html': parsedResult.generatedFixes?.jsonLdSchema || '',
+      'fixes/llms.txt': parsedResult.generatedFixes?.llmsTxt || '',
+      'fixes/robots.txt': parsedResult.generatedFixes?.robotsTxt || '',
+      'fixes/meta-tags.html': parsedResult.generatedFixes?.metaTagsHtml || '',
+    },
+  });
+});
+
 // ==================== 3. DEVELOPER API KEY MANAGEMENT (FIRESTORE) ====================
 app.get('/api/keys', requireFirebaseAuth, async (req: AuthenticatedRequest, res: Response) => {
   const [keys, logs] = await Promise.all([
